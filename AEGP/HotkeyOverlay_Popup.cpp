@@ -74,7 +74,7 @@ namespace {
 	void SendSliderUpdate(float value, const char* mode, bool polling)
 	{
 		WsSend(std::string(R"({"type":"slider","value":)") + std::to_string((int)value)
-			+ R"(,"mode":")" + mode + R"(","polling":)" + (polling ? "true" : "false") + "}");
+			+ R"(,"mode":")" + mode + R"(","polling":")" + (polling ? "true" : "false") + "\"}");
 	}
 
 	// Thin round-capped track with a blue dot handle at position t (0-1).
@@ -231,6 +231,11 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 		WsSend(R"({"type":"holdOutgoing"})");
 	} else if (clicked) {
 		SendSliderUpdate(sliderValue, mode, false);
+	} else {
+		// Loop only exits without holdOutgoing/clicked via WindowShouldClose's
+		// own Esc check - tell CEP to put the keyframes back the way it found
+		// them (it kept the pre-drag snapshot from the preview ticks).
+		WsSend(R"({"type":"cancel"})");
 	}
 }
 
