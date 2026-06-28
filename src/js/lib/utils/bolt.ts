@@ -218,9 +218,9 @@ export const initBolt = (log = true) => {
     initializeCEP();
     startWsServer();
     onAegpMessage((msg) => {
-      if (msg?.type === "slider") {
+      if (msg?.type === "polling" || msg?.type === "accept") {
         const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
-        evalES(buildEaseScript(Number(msg.value), mode, msg.polling === "true"), true);
+        evalES(buildEaseScript(Number(msg.value), mode, msg.type === "polling"), true);
       }
       if (msg?.type === "cancel") evalES(CANCEL_EASE_SCRIPT, true);
       if (msg?.type === "holdOutgoing") evalTS("setOutgoingHandleHold");

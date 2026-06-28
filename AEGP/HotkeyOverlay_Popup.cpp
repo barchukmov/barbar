@@ -67,14 +67,13 @@ namespace {
 	}
 
 	// Single shape for every slider update sent to AE - the 250ms-polled
-	// in-drag preview and the commit-on-dismiss message are otherwise
-	// identical, just at different points in the gesture. "polling" lets CEP
-	// tell them apart later if it ever needs to (e.g. skip undo-stepping on
-	// the live previews); for now both are handled the same on that end.
+	// in-drag preview and the commit-on-dismiss message carry the same
+	// value/mode, just under a different "type" so CEP can tell a live
+	// preview ("polling") from the final commit ("accept") apart.
 	void SendSliderUpdate(float value, const char* mode, bool polling)
 	{
-		WsSend(std::string(R"({"type":"slider","value":)") + std::to_string((int)value)
-			+ R"(,"mode":")" + mode + R"(","polling":")" + (polling ? "true" : "false") + "\"}");
+		WsSend(std::string(R"({"type":")") + (polling ? "polling" : "accept") + R"(","value":)"
+			+ std::to_string((int)value) + R"(,"mode":")" + mode + "\"}");
 	}
 
 	// Thin round-capped track with a blue dot handle at position t (0-1).
