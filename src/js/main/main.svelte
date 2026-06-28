@@ -7,12 +7,15 @@
     sendHotkeyTable,
     type HotkeyBinding,
   } from "../lib/ws-server";
+  import { loadAeKeymap, findClash } from "../lib/ae-keymap";
   import "../index.scss";
   import "./main.scss";
 
   let backgroundColor: string = $state("#282c34");
   let bindings: HotkeyBinding[] = $state([]);
   let listeningId: number | null = $state(null);
+  let clashWarning: string | null = $state(null);
+  let aeKeymap = loadAeKeymap();
 
   // Keys whose VK code doesn't equal their JS KeyboardEvent.key charCode -
   // letters and digits do (VK_A..Z = 0x41..5A, VK_0..9 = 0x30..39, same as
@@ -82,6 +85,9 @@
     listeningId = null;
     saveHotkeyTable(bindings);
     sendHotkeyTable();
+
+    const clash = findClash(aeKeymap, mods, vkey);
+    clashWarning = clash ? `Clashes with After Effects' "${clash}"` : null;
   };
 
   onMount(() => {
@@ -108,6 +114,9 @@
         </li>
       {/each}
     </ul>
+    {#if clashWarning}
+      <p class="clash-warning">{clashWarning}</p>
+    {/if}
   </header>
 </div>
 
@@ -130,5 +139,8 @@
   }
   .listening {
     color: orange;
+  }
+  .clash-warning {
+    color: #ff6b6b;
   }
 </style>
