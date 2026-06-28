@@ -61,6 +61,8 @@ try {
       var snap = MEM[id];
       if (!snap) {
         snap = {
+          prop: pr,
+          keyIndex: keyIndex,
           inType: pr.keyInInterpolationType(keyIndex),
           outType: pr.keyOutInterpolationType(keyIndex),
           inEase: pr.keyInTemporalEase(keyIndex),
@@ -105,3 +107,23 @@ export const buildEaseScript = (
   EASE_SCRIPT_TEMPLATE.replace("__VALUE__", String(value))
     .replace("__MODE__", mode)
     .replace("__IS_PREVIEW__", String(isPreview));
+
+// Esc dismisses the popup without a commit - the preview ticks already
+// wrote real keyframe edits during the drag, so cancelling means restoring
+// each touched keyframe from $.__easeMemory's pre-drag snapshot rather than
+// just dropping the cache.
+export const CANCEL_EASE_SCRIPT = `if ($.__easeMemory) {
+  app.beginUndoGroup("Cancel Ease");
+  try {
+    for (var id in $.__easeMemory) {
+      var snap = $.__easeMemory[id];
+      snap.prop.setTemporalEaseAtKey(snap.keyIndex, snap.inEase, snap.outEase);
+      // setTemporalEaseAtKey forces both sides to Bezier as a side effect -
+      // reassert the original types last so they stick.
+      snap.prop.setInterpolationTypeAtKey(snap.keyIndex, snap.inType, snap.outType);
+    }
+  } finally {
+    app.endUndoGroup();
+  }
+  $.__easeMemory = {};
+}`;
