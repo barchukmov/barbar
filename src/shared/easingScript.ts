@@ -40,19 +40,24 @@ try {
     for (var k = 0; k < keyCount; k++) {
       var keyIndex = ks[k];
       var count = easeCount(pr, keyIndex);
-      var inType = MODE !== "out" ? KeyframeInterpolationType.BEZIER : pr.keyInInterpolationType(keyIndex);
-      var outType = MODE !== "in" ? KeyframeInterpolationType.BEZIER : pr.keyOutInterpolationType(keyIndex);
+      // KeyframeEase's influence must be 0.1-100 - INF=0 means "linear", not
+      // "zero-influence bezier", so that case skips ease entirely.
+      var targetType = INF === 0 ? KeyframeInterpolationType.LINEAR : KeyframeInterpolationType.BEZIER;
+      var inType = MODE !== "out" ? targetType : pr.keyInInterpolationType(keyIndex);
+      var outType = MODE !== "in" ? targetType : pr.keyOutInterpolationType(keyIndex);
       pr.setInterpolationTypeAtKey(keyIndex, inType, outType);
 
-      var currentIn = pr.keyInTemporalEase(keyIndex);
-      var currentOut = pr.keyOutTemporalEase(keyIndex);
-      var easeIn = [];
-      var easeOut = [];
-      for (var i = 0; i < count; i++) {
-        easeIn.push(MODE !== "out" ? new KeyframeEase(0, INF) : currentIn[i]);
-        easeOut.push(MODE !== "in" ? new KeyframeEase(0, INF) : currentOut[i]);
+      if (targetType === KeyframeInterpolationType.BEZIER) {
+        var currentIn = pr.keyInTemporalEase(keyIndex);
+        var currentOut = pr.keyOutTemporalEase(keyIndex);
+        var easeIn = [];
+        var easeOut = [];
+        for (var i = 0; i < count; i++) {
+          easeIn.push(MODE !== "out" ? new KeyframeEase(0, INF) : currentIn[i]);
+          easeOut.push(MODE !== "in" ? new KeyframeEase(0, INF) : currentOut[i]);
+        }
+        pr.setTemporalEaseAtKey(keyIndex, easeIn, easeOut);
       }
-      pr.setTemporalEaseAtKey(keyIndex, easeIn, easeOut);
     }
   }
 } finally {
