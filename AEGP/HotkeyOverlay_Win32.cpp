@@ -2,32 +2,98 @@
 #include <windows.h>
 #include "HotkeyOverlay.h"
 #include "win32_popup_bridge.h"
+#include "WsClient.h"
+#include <unordered_map>
+#include <vector>
+#include <sstream>
+#include <cstdlib>
 
 namespace {
-	const int kHotkeyId = 1;
+	// Custom thread message carrying a freshly-pushed hotkey table. Posted
+	// from whatever thread receives the WS message (IXWebSocket's own), but
+	// must be applied on this thread - RegisterHotKey/UnregisterHotKey are
+	// tied to the thread whose message queue receives WM_HOTKEY.
+	const UINT kHotkeysUpdatedMsg = WM_APP + 1;
+
 	HANDLE g_thread = NULL;
 	DWORD g_threadId = 0;
 
+	// Only ever touched on the overlay thread (ThreadProc), so no lock needed.
+	std::unordered_map<int, std::string> g_idToFn;
+
+	struct Binding { int id; UINT vkey; UINT mods; std::string fn; };
+
+	std::vector<Binding> ParseHotkeyPayload(const std::string& payload)
+	{
+		std::vector<Binding> out;
+		std::stringstream ss(payload);
+		std::string entry;
+		while (std::getline(ss, entry, ';')) {
+			if (entry.empty()) continue;
+			std::stringstream es(entry);
+			std::string idStr, vkeyStr, modsStr, fn;
+			std::getline(es, idStr, ',');
+			std::getline(es, vkeyStr, ',');
+			std::getline(es, modsStr, ',');
+			std::getline(es, fn, ',');
+			if (idStr.empty() || vkeyStr.empty() || modsStr.empty()) continue;
+			out.push_back({ std::atoi(idStr.c_str()), (UINT)std::atoi(vkeyStr.c_str()), (UINT)std::atoi(modsStr.c_str()), fn });
+		}
+		return out;
+	}
+
+	void ApplyHotkeyTable(const std::string& payload)
+	{
+		for (auto& entry : g_idToFn) UnregisterHotKey(NULL, entry.first);
+		g_idToFn.clear();
+
+		for (auto& b : ParseHotkeyPayload(payload)) {
+			UINT winMods = MOD_NOREPEAT;
+			if (b.mods & 0x1) winMods |= MOD_CONTROL;
+			if (b.mods & 0x2) winMods |= MOD_SHIFT;
+			if (b.mods & 0x4) winMods |= MOD_ALT;
+			if (RegisterHotKey(NULL, b.id, winMods, b.vkey)) {
+				g_idToFn[b.id] = b.fn;
+			}
+		}
+	}
+
+	// Function names AEGP can run itself vs. forwarding to CEP over WS.
+	// Just "Easing" today - see RunNativeFunction's caller for the fallback.
+	bool RunNativeFunction(const std::string& fn, int x, int y, int screenW, int screenH)
+	{
+		if (fn == "Easing") {
+			RunPopupAtCursor(x, y, screenW, screenH);
+			return true;
+		}
+		return false;
+	}
+
 	DWORD WINAPI ThreadProc(LPVOID)
 	{
-		if (!RegisterHotKey(NULL, kHotkeyId, MOD_CONTROL | MOD_NOREPEAT, 'H')) return 1;
-
 		MSG msg;
 		while (GetMessage(&msg, NULL, 0, 0)) {
-			if (msg.message == WM_HOTKEY && (int)msg.wParam == kHotkeyId) {
+			if (msg.message == kHotkeysUpdatedMsg) {
+				std::string* payload = reinterpret_cast<std::string*>(msg.lParam);
+				ApplyHotkeyTable(*payload);
+				delete payload;
+			} else if (msg.message == WM_HOTKEY) {
+				auto it = g_idToFn.find((int)msg.wParam);
+				if (it == g_idToFn.end()) continue;
+
 				DWORD fgPid = 0;
 				GetWindowThreadProcessId(GetForegroundWindow(), &fgPid);
-				if (fgPid == GetCurrentProcessId()) {
-					POINT pt;
-					GetCursorPos(&pt);
-					// Pass primary-monitor size so the raylib side can create the
-					// window at final size (it can't include windows.h itself).
-					RunPopupAtCursor(pt.x, pt.y, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)); // blocks until the popup closes
+				if (fgPid != GetCurrentProcessId()) continue;
+
+				POINT pt;
+				GetCursorPos(&pt);
+				if (!RunNativeFunction(it->second, pt.x, pt.y, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))) {
+					WsSend(R"({"type":"hotkeyTriggered","fn":")" + it->second + "\"}");
 				}
 			}
 		}
 
-		UnregisterHotKey(NULL, kHotkeyId);
+		for (auto& entry : g_idToFn) UnregisterHotKey(NULL, entry.first);
 		ClosePopupWindow(); // same thread that created it - must tear down here, not from DeathHook's thread
 		return 0;
 	}
@@ -50,4 +116,10 @@ void StopHotkeyOverlay()
 	WaitForSingleObject(g_thread, 2000);
 	CloseHandle(g_thread);
 	g_thread = NULL;
+}
+
+void UpdateHotkeyTable(const std::string& payload)
+{
+	if (!g_threadId) return;
+	PostThreadMessage(g_threadId, kHotkeysUpdatedMsg, 0, (LPARAM)new std::string(payload));
 }
