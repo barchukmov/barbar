@@ -20,21 +20,17 @@ namespace {
 				if (fgPid == GetCurrentProcessId()) {
 					POINT pt;
 					GetCursorPos(&pt);
-					RunPopupAtCursor(pt.x, pt.y); // blocks until the popup closes
+					// Pass primary-monitor size so the raylib side can create the
+					// window at final size (it can't include windows.h itself).
+					RunPopupAtCursor(pt.x, pt.y, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)); // blocks until the popup closes
 				}
 			}
 		}
 
 		UnregisterHotKey(NULL, kHotkeyId);
+		ClosePopupWindow(); // same thread that created it - must tear down here, not from DeathHook's thread
 		return 0;
 	}
-}
-
-void ForceForeground(void* hwnd)
-{
-	HWND h = (HWND)hwnd;
-	SetForegroundWindow(h);
-	SetFocus(h);
 }
 
 void StartHotkeyOverlay()

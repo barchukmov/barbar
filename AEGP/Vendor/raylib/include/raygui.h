@@ -2930,7 +2930,7 @@ int GuiValueBox(Rectangle bounds, const char *text, int *value, int minValue, in
 
 // Slider control with pro parameters
 // NOTE: Other GuiSlider*() controls use this one
-int GuiSliderPro(Rectangle bounds, const char *textLeft, const char *textRight, float *value, float minValue, float maxValue, int sliderWidth)
+int GuiSliderPro(Rectangle bounds, const char *textLeft, const char *textRight, float *value, float minValue, float maxValue, int sliderWidth, bool forceDragging)
 {
     int result = 0;
     GuiState state = guiState;
@@ -2960,7 +2960,8 @@ int GuiSliderPro(Rectangle bounds, const char *textLeft, const char *textRight, 
     {
         Vector2 mousePoint = GetMousePosition();
 
-        if (guiSliderDragging) // Keep dragging outside of bounds
+        if (forceDragging) { state = STATE_PRESSED; *value = ((maxValue - minValue)*(mousePoint.x - (float)(bounds.x + sliderWidth/2)))/(float)(bounds.width - sliderWidth) + minValue; }
+        else if (guiSliderDragging) // Keep dragging outside of bounds
         {
             if (IsMouseButtonDown(MOUSE_LEFT_BUTTON))
             {
@@ -3053,13 +3054,13 @@ int GuiSliderPro(Rectangle bounds, const char *textLeft, const char *textRight, 
 // Slider control extended, returns selected value and has text
 int GuiSlider(Rectangle bounds, const char *textLeft, const char *textRight, float *value, float minValue, float maxValue)
 {
-    return GuiSliderPro(bounds, textLeft, textRight, value, minValue, maxValue, GuiGetStyle(SLIDER, SLIDER_WIDTH));
+    return GuiSliderPro(bounds, textLeft, textRight, value, minValue, maxValue, GuiGetStyle(SLIDER, SLIDER_WIDTH), false);
 }
 
 // Slider Bar control extended, returns selected value
 int GuiSliderBar(Rectangle bounds, const char *textLeft, const char *textRight, float *value, float minValue, float maxValue)
 {
-    return GuiSliderPro(bounds, textLeft, textRight, value, minValue, maxValue, 0);
+    return GuiSliderPro(bounds, textLeft, textRight, value, minValue, maxValue, 0, false);
 }
 
 // Progress Bar control extended, shows current progress value
