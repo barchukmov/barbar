@@ -2,7 +2,7 @@ import CSInterface, { CSEvent } from "../cep/csinterface";
 import Vulcan, { VulcanMessage } from "../cep/vulcan";
 import { ns } from "../../../shared/shared";
 import { fs } from "../cep/node";
-import { startWsServer, onAegpMessage, sendToAegp } from "../ws-server";
+import { startWsServer, onAegpMessage, sendToAegp, loadPollingEnabled } from "../ws-server";
 import { buildEaseScript, CANCEL_EASE_SCRIPT } from "../../../shared/easingScript";
 
 export const csi = new CSInterface();
@@ -218,6 +218,7 @@ export const initBolt = (log = true) => {
     initializeCEP();
     startWsServer();
     onAegpMessage((msg) => {
+      if (msg?.type === "polling" && !loadPollingEnabled()) return;
       if (msg?.type === "polling" || msg?.type === "accept") {
         const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
         evalES(buildEaseScript(Number(msg.value), mode, msg.type === "polling"), true);

@@ -54,6 +54,27 @@ export const saveHotkeyTable = (bindings: HotkeyBinding[]) => {
 const encodeHotkeyPayload = (bindings: HotkeyBinding[]) =>
   bindings.map((b) => `${b.id},${b.vkey},${b.mods},${b.fn}`).join(";");
 
+// "Polling" = the live-preview evalES tick AEGP sends on every slider-drag
+// frame (not just on commit) - some users would rather only see the result
+// on release. Stored separately from the hotkey table since it's a CEP-only
+// setting AEGP never needs to read.
+const settingsFile = () => `${csi.getSystemPath("userData")}/barbar-settings.json`;
+
+export const loadPollingEnabled = (): boolean => {
+  if (!window.cep) return true;
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    return settings.pollingEnabled !== false;
+  } catch {
+    return true;
+  }
+};
+
+export const savePollingEnabled = (enabled: boolean) => {
+  if (!window.cep) return;
+  fs.writeFileSync(settingsFile(), JSON.stringify({ pollingEnabled: enabled }));
+};
+
 // Pushes the current table to AEGP. AEGP always replaces its whole
 // registration on receipt (unregister everything, register fresh) - no
 // diffing - so this is safe to call on every connect and on every edit.

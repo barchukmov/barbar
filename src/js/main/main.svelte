@@ -6,6 +6,8 @@
     loadHotkeyTable,
     saveHotkeyTable,
     sendHotkeyTable,
+    loadPollingEnabled,
+    savePollingEnabled,
     type HotkeyBinding,
   } from "../lib/ws-server";
   import { loadAeKeymap, findClash } from "../lib/ae-keymap";
@@ -16,6 +18,7 @@
   let bindings: HotkeyBinding[] = $state([]);
   let listeningId: number | null = $state(null);
   let clashWarning: string | null = $state(null);
+  let pollingEnabled: boolean = $state(true);
   let aeKeymap = loadAeKeymap();
 
   // Keys whose VK code doesn't equal their JS KeyboardEvent.key charCode -
@@ -93,8 +96,14 @@
 
   onMount(() => {
     bindings = loadHotkeyTable();
+    pollingEnabled = loadPollingEnabled();
     if (window.cep) subscribeBackgroundColor((c: string) => (backgroundColor = c));
   });
+
+  const onPollingToggle = (e: Event) => {
+    pollingEnabled = (e.target as HTMLInputElement).checked;
+    savePollingEnabled(pollingEnabled);
+  };
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -128,6 +137,10 @@
       Ease 70%
     </button>
     <p class="ease-hint">Ctrl = in only · Shift = out only</p>
+    <label class="polling-toggle">
+      <input type="checkbox" checked={pollingEnabled} onchange={onPollingToggle} />
+      Live preview while dragging
+    </label>
     <details class="ease-script">
       <summary>Script run by "Ease 70%"</summary>
       <pre>{buildEaseScript(70)}</pre>
@@ -167,6 +180,13 @@
     margin: 4px 0 0;
     font-size: 0.7rem;
     color: $font;
+  }
+  .polling-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    font-size: 0.75rem;
   }
   .ease-script {
     margin-top: 8px;
