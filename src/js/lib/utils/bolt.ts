@@ -3,6 +3,7 @@ import Vulcan, { VulcanMessage } from "../cep/vulcan";
 import { ns } from "../../../shared/shared";
 import { fs } from "../cep/node";
 import { startWsServer, onAegpMessage, sendToAegp } from "../ws-server";
+import { buildEaseScript } from "../../../shared/easingScript";
 
 export const csi = new CSInterface();
 export const vulcan = new Vulcan();
@@ -219,7 +220,7 @@ export const initBolt = (log = true) => {
     onAegpMessage((msg) => {
       if (msg?.type === "slider") {
         const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
-        evalTS("applyEasing", Number(msg.value), mode);
+        evalES(buildEaseScript(Number(msg.value), mode), true);
       }
       if (msg?.type === "holdOutgoing") evalTS("setOutgoingHandleHold");
       if (msg?.type === "keyframeSelectionQuery") {

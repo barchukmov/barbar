@@ -1,10 +1,13 @@
-// The literal ExtendScript run by the CEP "Ease" button, kept as a plain
-// string (not a compiled jsx export) so the exact same text can be shown in
-// the panel UI and sent to evalES - what you see is what runs, no
-// abstraction gap to audit through.
+export type EaseMode = "in" | "out" | "both";
+
+// The literal ExtendScript run by the CEP "Ease" button and the AEGP popup
+// slider, kept as a plain string (not a compiled jsx export) so the exact
+// same text can be shown in the panel UI and sent to evalES - what you see
+// is what runs, no abstraction gap to audit through.
 export const EASE_SCRIPT_TEMPLATE = `var comp = app.project.activeItem;
 if (!comp || !(comp instanceof CompItem)) throw new Error("No active comp");
 var INF = __VALUE__;
+var MODE = "__MODE__";
 var sourceProps = comp.selectedProperties;
 var props = [];
 var propCount = sourceProps.length;
@@ -37,13 +40,18 @@ try {
     for (var k = 0; k < keyCount; k++) {
       var keyIndex = ks[k];
       var count = easeCount(pr, keyIndex);
+      var inType = MODE !== "out" ? KeyframeInterpolationType.BEZIER : pr.keyInInterpolationType(keyIndex);
+      var outType = MODE !== "in" ? KeyframeInterpolationType.BEZIER : pr.keyOutInterpolationType(keyIndex);
+      pr.setInterpolationTypeAtKey(keyIndex, inType, outType);
+
+      var currentIn = pr.keyInTemporalEase(keyIndex);
+      var currentOut = pr.keyOutTemporalEase(keyIndex);
       var easeIn = [];
       var easeOut = [];
       for (var i = 0; i < count; i++) {
-        easeIn.push(new KeyframeEase(0, INF));
-        easeOut.push(new KeyframeEase(0, INF));
+        easeIn.push(MODE !== "out" ? new KeyframeEase(0, INF) : currentIn[i]);
+        easeOut.push(MODE !== "in" ? new KeyframeEase(0, INF) : currentOut[i]);
       }
-      pr.setInterpolationTypeAtKey(keyIndex, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
       pr.setTemporalEaseAtKey(keyIndex, easeIn, easeOut);
     }
   }
@@ -51,5 +59,5 @@ try {
   app.endUndoGroup();
 }`;
 
-export const buildEaseScript = (value: number): string =>
-  EASE_SCRIPT_TEMPLATE.replace("__VALUE__", String(value));
+export const buildEaseScript = (value: number, mode: EaseMode = "both"): string =>
+  EASE_SCRIPT_TEMPLATE.replace("__VALUE__", String(value)).replace("__MODE__", mode);
