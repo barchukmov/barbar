@@ -11,3 +11,8 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH);
 void RunNoSelectionToast(int mouseX, int mouseY, int screenW, int screenH);
 
 void ClosePopupWindow();
+
+// Absolute path to the popup font, resolved from this plugin DLL's own
+// module path (HotkeyOverlay_Win32.cpp - the windows.h side) since
+// LoadFontEx (the raylib.h side) needs an absolute path either way.
+const char* GetFontPath();
