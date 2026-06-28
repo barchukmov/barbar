@@ -221,6 +221,7 @@ export const initBolt = (log = true) => {
         const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
         evalTS("applyEasing", Number(msg.value), mode);
       }
+      if (msg?.type === "holdOutgoing") evalTS("setOutgoingHandleHold");
       if (msg?.type === "keyframeSelectionQuery") {
         evalTS("isAnyKeyframeSelected").then((selected) => {
           sendToAegp({ type: "keyframeSelectionReply", selected });
