@@ -1,135 +1,134 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { os, path } from "../lib/cep/node";
+  import { subscribeBackgroundColor } from "../lib/utils/bolt";
   import {
-    csi,
-    evalES,
-    openLinkInBrowser,
-    subscribeBackgroundColor,
-    evalTS,
-  } from "../lib/utils/bolt";
+    loadHotkeyTable,
+    saveHotkeyTable,
+    sendHotkeyTable,
+    type HotkeyBinding,
+  } from "../lib/ws-server";
   import "../index.scss";
   import "./main.scss";
+
   let backgroundColor: string = $state("#282c34");
+  let bindings: HotkeyBinding[] = $state([]);
+  let listeningId: number | null = $state(null);
 
-  import viteLogo from "../assets/vite.svg";
-  import svelteLogo from "../assets/svelte.svg";
-  import tsLogo from "../assets/typescript.svg";
-  import sassLogo from "../assets/sass.svg";
-  import nodeJs from "../assets/node-js.svg";
-  import adobe from "../assets/adobe.svg";
-  import bolt from "../assets/bolt-cep.svg";
+  // Keys whose VK code doesn't equal their JS KeyboardEvent.key charCode -
+  // letters and digits do (VK_A..Z = 0x41..5A, VK_0..9 = 0x30..39, same as
+  // their uppercase ASCII), so only the rest need an explicit table.
+  const SPECIAL_VKEYS: Record<string, number> = {
+    ArrowLeft: 0x25,
+    ArrowUp: 0x26,
+    ArrowRight: 0x27,
+    ArrowDown: 0x28,
+    Escape: 0x1b,
+    Tab: 0x09,
+    Enter: 0x0d,
+    Backspace: 0x08,
+    Delete: 0x2e,
+    " ": 0x20,
+    F1: 0x70,
+    F2: 0x71,
+    F3: 0x72,
+    F4: 0x73,
+    F5: 0x74,
+    F6: 0x75,
+    F7: 0x76,
+    F8: 0x77,
+    F9: 0x78,
+    F10: 0x79,
+    F11: 0x7a,
+    F12: 0x7b,
+  };
+  const VKEY_LABELS: Record<number, string> = Object.fromEntries(
+    Object.entries(SPECIAL_VKEYS).map(([k, v]) => [v, k === " " ? "Space" : k])
+  );
 
-  let count: number = $state(0);
-  let double: number = $derived(count * 2);
-
-  //* Demonstration of Traditional string eval-based ExtendScript Interaction
-  const jsxTest = () => {
-    console.log(evalES(`helloWorld("${csi.getApplicationID()}")`));
+  const keyToVKey = (key: string): number | null => {
+    if (key.length === 1) {
+      const code = key.toUpperCase().charCodeAt(0);
+      if ((code >= 0x41 && code <= 0x5a) || (code >= 0x30 && code <= 0x39))
+        return code;
+      return null;
+    }
+    return SPECIAL_VKEYS[key] ?? null;
   };
 
-  //* Demonstration of End-to-End Type-safe ExtendScript Interaction
-  const jsxTestTS = () => {
-    evalTS("helloStr", "test").then((res) => {
-      console.log(res);
-    });
-    evalTS("helloNum", 1000).then((res) => {
-      console.log(typeof res, res);
-    });
-    evalTS("helloArrayStr", ["ddddd", "aaaaaa", "zzzzzzz"]).then((res) => {
-      console.log(typeof res, res);
-    });
-    evalTS("helloObj", { height: 90, width: 100 }).then((res) => {
-      console.log(typeof res, res);
-      console.log(res.x);
-      console.log(res.y);
-    });
-    evalTS("helloVoid").then(() => {
-      console.log("function returning void complete");
-    });
-    evalTS("helloError", "test").catch((e) => {
-      console.log("there was an error", e);
-    });
+  const vkeyLabel = (vkey: number) =>
+    VKEY_LABELS[vkey] ?? String.fromCharCode(vkey);
+
+  const shortcutLabel = (b: HotkeyBinding) => {
+    const mods: string[] = [];
+    if (b.mods & 1) mods.push("Ctrl");
+    if (b.mods & 2) mods.push("Shift");
+    if (b.mods & 4) mods.push("Alt");
+    return [...mods, vkeyLabel(b.vkey)].join("+");
   };
 
-  const nodeTest = () => {
-    alert(
-      `Node.js ${process.version}\nPlatform: ${
-        os.platform
-      }\nFolder: ${path.basename(window.cep_node.global.__dirname)}`
+  const onKeydown = (e: KeyboardEvent) => {
+    if (listeningId === null) return;
+    e.preventDefault();
+    if (e.key === "Escape") {
+      listeningId = null;
+      return;
+    }
+    const vkey = keyToVKey(e.key);
+    if (vkey === null) return; // unsupported key - keep listening
+    const mods = (e.ctrlKey ? 1 : 0) | (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0);
+    bindings = bindings.map((b) =>
+      b.id === listeningId ? { ...b, vkey, mods } : b
     );
+    listeningId = null;
+    saveHotkeyTable(bindings);
+    sendHotkeyTable();
   };
 
   onMount(() => {
-    if (window.cep) {
-      subscribeBackgroundColor((c: string) => (backgroundColor = c));
-    }
+    bindings = loadHotkeyTable();
+    if (window.cep) subscribeBackgroundColor((c: string) => (backgroundColor = c));
   });
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 <div class="app" style="background-color: {backgroundColor};">
   <header class="app-header">
-    <img src={bolt} class="icon" alt="" />
-    <div class="stack-icons">
-      <div>
-        <img src={viteLogo} alt="" />
-        Vite
-      </div>
-      +
-      <div>
-        <img src={svelteLogo} alt="" />
-        Svelte
-      </div>
-      +
-      <div>
-        <img src={tsLogo} alt="" />
-        TypeScript
-      </div>
-      +
-      <div>
-        <img src={sassLogo} alt="" />
-        Sass
-      </div>
-    </div>
-    <div class="button-group">
-      <button onclick={(e) => {
-        localStorage.setItem("floatingPos", JSON.stringify({ x: Math.random() * 1000, y: Math.random() * 600 }));
-        csi.requestOpenExtension("barbar.floating", "");
-      }}>Float</button>
-      <button onclick={() => (count += 1)}>Count is: {count}</button>
-      <button onclick={() => console.log("test")}>console log</button>
-      <button onclick={nodeTest}>
-        <img class="icon-button" src={nodeJs} alt="" />
-      </button>
-      <button onclick={jsxTest}>
-        <img class="icon-button" src={adobe} alt="" />
-      </button>
-      <button onclick={jsxTestTS}>Ts</button>
-    </div>
-
-    <p>Edit <code>main.svelte</code> and save to test HMR updates.</p>
-    <p>
-      <button
-        onclick={() =>
-          openLinkInBrowser("https://github.com/hyperbrew/bolt-cep")}
-      >
-        Bolt Docs
-      </button>
-      |
-      <button onclick={() => openLinkInBrowser("https://svelte.dev/docs")}>
-        Svelte Docs
-      </button>
-      |
-      <button
-        onclick={() =>
-          openLinkInBrowser("https://vitejs.dev/guide/features.html")}
-      >
-        Vite Docs
-      </button>
-    </p>
+    <h2>Shortcuts</h2>
+    <ul class="shortcut-list">
+      {#each bindings as b (b.id)}
+        <li>
+          <span class="fn-name">{b.fn}</span>
+          <button
+            class:listening={listeningId === b.id}
+            onclick={() => (listeningId = b.id)}
+          >
+            {listeningId === b.id ? "Press a key..." : shortcutLabel(b)}
+          </button>
+        </li>
+      {/each}
+    </ul>
   </header>
 </div>
 
 <style lang="scss">
   @use "../variables.scss" as *;
+  .app {
+    padding: 16px;
+    color: white;
+  }
+  .shortcut-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    li {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+    }
+  }
+  .listening {
+    color: orange;
+  }
 </style>
