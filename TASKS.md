@@ -1,20 +1,22 @@
 # Next up
 
-1. **Keep CEP alive without a visible panel.** `background` panel (cep.config.ts:46-56) already runs `initBolt()`/ws-server from AE launch via `autoVisible`. Gap: nothing relaunches it if that panel ever gets closed/unloaded. Plan: `WsClient` exposes `IsConnected()`; before showing the popup, AEGP checks it, and if disconnected, fires the panel's Window-menu command (AEGP command suite) to bring CEP back up.
+Order: #1 (shared WS plumbing) first, then 2/3/4/5/6/7 in order. Commit after each.
 
-2. **Strip CEP boilerplate.** Gut `src/js/main/main.svelte` / `app.svelte`. Replace with: a list of extension features (just "Easing" for now), each with a user-assignable shortcut. Persist the chosen shortcut to disk.
+1. **WS plumbing: hotkey table push + dispatch + keyframe-selection query.**
+   - CEP holds the only on-disk copy (JSON file under `csi.getSystemPath(SystemPath.USER_DATA)`), written by the shortcut picker (#2). Table rows are `[hotkey, function_name]`.
+   - On every AEGP `"hello"` and every CEP-side edit, CEP sends `{"type":"hotkeys","payload":"id,vkey,mods,fn;..."}` — flat delimited string inside a JSON wrapper. AEGP extracts/`strtok`s the payload string itself; no JSON library added.
+   - AEGP replaces its whole registration on receipt: `UnregisterHotKey` everything currently held, then `RegisterHotKey` fresh from the new table. No diffing.
+   - Dispatch: AEGP keeps a small static map of native function names (just `"Easing"` today) it runs directly. Any `fn` it doesn't recognize, it sends `{"type":"hotkeyTriggered","fn":"..."}` over WS and CEP handles it.
+   - Same request/response machinery also carries the keyframe-selection query (AEGP asks CEP "are keyframes selected?", blocks for the reply) needed by #4.
 
-3. **Parse the AE keymap for clash-checking.** Format in `After Effects Default.txt`: `"CommandName" = "(Ctrl+Alt+Key)"`, ~674 entries. Parser feeds the shortcut picker so it can warn on collision with a stock AE binding. Actual hotkey registration/enforcement still lives in AEGP's `RegisterHotKey` call.
+2. **Strip CEP boilerplate, add shortcut picker UI.** Gut `src/js/main/main.svelte` / `app.svelte`. List of extension features (starts with "Easing"), each with a user-assignable shortcut. Writes the on-disk table from #1 and pushes it over WS on every change.
 
-4. **Easing feature end-to-end.**
-   - Slider: 0 = linear, 1-100 = ease amount (`HotkeyOverlay_Popup.cpp`).
-   - Ctrl held = ease-in only, Shift held = ease-out only, neither = both.
-   - On shortcut press, AEGP must ask CEP whether keyframes are selected *before* showing the popup. Current `WsClient`/ws-server is fire-and-forget AEGP→CEP only (`bolt.ts:219` just alerts on `slider`); needs a real request/response round trip.
-   - No keyframes selected → skip the slider, show a toast at the cursor ("No keyframes are selected") that fades after ~1s, instead of the popup.
+3. **Parse the AE keymap for clash-checking.** `"CommandName" = "(Ctrl+Alt+Key)"` format in `After Effects Default.txt`, ~674 entries. Feeds the picker so it can warn on collision with a stock AE binding.
 
-5. **Outgoing-handle-only hold button.** New `GuiButton` in the popup to set hold on the outgoing handle only (not both). Must hit-test the button *before* the existing "any click dismisses" logic (`HotkeyOverlay_Popup.cpp:85`), or clicking it just closes the popup.
+4. **Easing popup behavior: modifier-gated in/out, no-selection toast.** Uses #1's query: ask CEP if keyframes are selected before showing the popup. None selected -> fading "No keyframes are selected" toast at the cursor (~1s) instead of the slider popup. Slider 0=linear, 1-100=ease amount; Ctrl=in only, Shift=out only, neither=both.
 
-6. **Show modifier state in the popup.** Draw "In only" / "Out only" near the slider when Ctrl/Shift is held — check each frame in the draw loop.
+5. **Outgoing-handle-only hold button.** New `GuiButton` in the popup (`HotkeyOverlay_Popup.cpp`) for hold-on-outgoing-handle-only. Must hit-test before the existing "any click dismisses" logic (`HotkeyOverlay_Popup.cpp:85`).
 
-7. **ExtendScript: monotonic runs → continuous bezier.** For N≥3 selected keyframes forming an ascending or descending run, the *interior* keyframes of that run (not its endpoints) get continuous-bezier interpolation instead of the ease applied — easing an interior point of a monotonic run doesn't make sense.
-   - Open question: confirm the endpoint rule. Example given: values `5,6,7,8,7` at indices 0-4. The run is 0-3 (5,6,7,8); "points 1 and 2" (values 6,7) become continuous-bezier. Need to confirm endpoints of a run keep normal easing in all cases, including when the run is the *whole* selection (no preceding/following keyframe to ease against).
+6. **Show modifier state in the popup.** Draw "In only" / "Out only" near the slider when Ctrl/Shift held, checked each frame in the draw loop.
+
+7. **ExtendScript: monotonic runs -> continuous bezier.** For N>=3 selected keyframes forming an ascending or descending run, interior keyframes of that run (not the run's own first/last) get continuous-bezier instead of the ease applied. No special-casing needed for whether a run's endpoint is also the whole selection's first/last keyframe — only interior-of-run position matters.
