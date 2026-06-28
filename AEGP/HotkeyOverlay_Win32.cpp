@@ -63,7 +63,16 @@ namespace {
 	bool RunNativeFunction(const std::string& fn, int x, int y, int screenW, int screenH)
 	{
 		if (fn == "Easing") {
-			RunPopupAtCursor(x, y, screenW, screenH);
+			std::string reply = WsRequest(R"({"type":"keyframeSelectionQuery"})", "keyframeSelectionReply", 300);
+			// ponytail: an empty/timed-out reply (CEP slow to answer, or not
+			// connected yet) is treated as "selected" - this is a UX nicety,
+			// not a guarantee, so erring toward showing the popup is right.
+			bool selected = reply.empty() || WsJsonGetString(reply, "selected") != "false";
+			if (selected) {
+				RunPopupAtCursor(x, y, screenW, screenH);
+			} else {
+				RunNoSelectionToast(x, y, screenW, screenH);
+			}
 			return true;
 		}
 		return false;

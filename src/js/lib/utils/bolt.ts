@@ -217,7 +217,10 @@ export const initBolt = (log = true) => {
     initializeCEP();
     startWsServer();
     onAegpMessage((msg) => {
-      if (msg?.type === "slider") evalES(`alert(${Number(msg.value)})`, true);
+      if (msg?.type === "slider") {
+        const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
+        evalTS("applyEasing", Number(msg.value), mode);
+      }
       if (msg?.type === "keyframeSelectionQuery") {
         evalTS("isAnyKeyframeSelected").then((selected) => {
           sendToAegp({ type: "keyframeSelectionReply", selected });

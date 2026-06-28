@@ -20,10 +20,7 @@ namespace {
 
 namespace {
 	bool g_windowReady = false;
-}
 
-void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
-{
 	// Fullscreen + transparent: a normal small window stops getting mouse-move
 	// events the instant the cursor leaves its client area (no capture), which
 	// froze the slider at the window edge. Covering the whole screen means the
@@ -33,8 +30,15 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	// The window is created once and hidden/shown after that rather than
 	// Init/CloseWindow per popup - raylib's GLFW backend doesn't reliably
 	// reapply some window flags (transparency was the visible symptom) when a
-	// window is recreated in the same process.
-	if (!g_windowReady) {
+	// window is recreated in the same process. Shared by every popup/toast
+	// variant below.
+	void EnsureWindowReady(int screenW, int screenH)
+	{
+		if (g_windowReady) {
+			ClearWindowState(FLAG_WINDOW_HIDDEN);
+			return;
+		}
+
 		SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_TOPMOST | FLAG_WINDOW_TRANSPARENT);
 		// Create at final size - GLFW wires up the transparent framebuffer/DWM
 		// surface at creation, and resizing afterward (the old 1x1 -> SetWindowSize)
@@ -56,9 +60,13 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 		GuiSetStyle(SLIDER, TEXT_COLOR_PRESSED, ColorToInt(kText)); // slider handle color while forceDragging (always STATE_PRESSED)
 
 		g_windowReady = true;
-	} else {
-		ClearWindowState(FLAG_WINDOW_HIDDEN);
 	}
+}
+
+void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
+{
+	EnsureWindowReady(screenW, screenH);
+
 	const float kPanelW = 220, kPanelH = 50, kPadding = 15, kRadiusPx = 5;
 	const float kRoundness = (2 * kRadiusPx) / (kPanelW < kPanelH ? kPanelW : kPanelH);
 
@@ -66,6 +74,7 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	Rectangle sliderBounds = { panel.x + kPadding, panel.y + kPadding, kPanelW - 2 * kPadding, kPanelH - 2 * kPadding };
 	float sliderValue = 0.0f;
 	bool clicked = false;
+	const char* mode = "both";
 
 	// Dismissal is explicit (click below, or Esc via WindowShouldClose) - not
 	// focus-based. A background thread re-showing an already-existing window
@@ -80,6 +89,11 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 		// forceDragging=true: tracks the cursor every frame, no click/hold needed
 		GuiSliderPro(sliderBounds, NULL, NULL, &sliderValue, 0.0f, 100.0f, GuiGetStyle(SLIDER, SLIDER_WIDTH), true);
 		bool clickedThisFrame = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+		// Read every frame, not just at commit, so the held modifier always
+		// matches what's drawn (see HotkeyOverlay_Popup's mode label, task #6).
+		bool ctrlHeld = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+		bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+		mode = ctrlHeld ? "in" : (shiftHeld ? "out" : "both");
 		EndDrawing();
 
 		if (clickedThisFrame) {
@@ -91,8 +105,34 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	SetWindowState(FLAG_WINDOW_HIDDEN);
 
 	if (clicked) {
-		WsSend("{\"type\":\"slider\",\"value\":" + std::to_string((int)sliderValue) + "}");
+		WsSend(std::string(R"({"type":"slider","value":)") + std::to_string((int)sliderValue) + R"(,"mode":")" + mode + "\"}");
 	}
+}
+
+void RunNoSelectionToast(int mouseX, int mouseY, int screenW, int screenH)
+{
+	EnsureWindowReady(screenW, screenH);
+
+	const float kPanelW = 240, kPanelH = 40, kRadiusPx = 5;
+	const float kRoundness = (2 * kRadiusPx) / (kPanelW < kPanelH ? kPanelW : kPanelH);
+	Rectangle panel = { (float)(mouseX - kPanelW / 2), (float)(mouseY - kPanelH / 2), kPanelW, kPanelH };
+
+	const float kLifetimeSec = 1.0f;
+	float elapsed = 0.0f;
+	while (!WindowShouldClose() && elapsed < kLifetimeSec) {
+		float alpha = 1.0f - (elapsed / kLifetimeSec);
+		BeginDrawing();
+		ClearBackground(BLANK);
+		DrawRectangleRounded(panel, kRoundness, 0, Fade(kBg, alpha));
+		DrawRectangleRoundedLinesEx(panel, kRoundness, 0, 2, Fade(kBorder, alpha));
+		DrawText("No keyframes are selected", (int)panel.x + 12, (int)(panel.y + panel.height / 2 - 5), 10, Fade(kText, alpha));
+		EndDrawing();
+
+		if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) break; // explicit dismiss still works
+		elapsed += GetFrameTime();
+	}
+
+	SetWindowState(FLAG_WINDOW_HIDDEN);
 }
 
 void ClosePopupWindow()
