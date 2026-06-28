@@ -220,7 +220,7 @@ export const initBolt = (log = true) => {
     onAegpMessage((msg) => {
       if (msg?.type === "slider") {
         const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
-        evalES(buildEaseScript(Number(msg.value), mode), true);
+        evalES(buildEaseScript(Number(msg.value), mode, !!msg.polling), true);
       }
       if (msg?.type === "holdOutgoing") evalTS("setOutgoingHandleHold");
       if (msg?.type === "keyframeSelectionQuery") {
