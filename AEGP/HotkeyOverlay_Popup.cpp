@@ -100,10 +100,13 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 		bool dismissClick = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !overButton;
 
 		// Read every frame, not just at commit, so the held modifier always
-		// matches what's drawn (see HotkeyOverlay_Popup's mode label, task #6).
+		// matches what's drawn.
 		bool ctrlHeld = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
 		bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
 		mode = ctrlHeld ? "in" : (shiftHeld ? "out" : "both");
+		if (mode[0] != 'b') { // "in" or "out" - "both" needs no label
+			DrawText(mode[0] == 'i' ? "In only" : "Out only", (int)panel.x, (int)panel.y - 18, 14, kText);
+		}
 		EndDrawing();
 
 		if (holdButtonClicked) {
