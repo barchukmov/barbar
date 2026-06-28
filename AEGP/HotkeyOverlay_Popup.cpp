@@ -1,13 +1,4 @@
 #include "raylib.h"
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable: 4996 4267) // raygui.h: plain sprintf/fopen/sscanf, size_t->int narrowing - vendored, not ours to fix
-#endif
-#define RAYGUI_IMPLEMENTATION
-#include "raygui.h"
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 #include "win32_popup_bridge.h"
 #include "WsClient.h"
 #include <string>
@@ -16,10 +7,88 @@ namespace {
 	const Color kBorder = { 0x00, 0x00, 0x00, 255 };
 	const Color kBg = { 0x1d, 0x1d, 0x1d, 255 };
 	const Color kText = { 0xd0, 0xd0, 0xd0, 255 };
+	const Color kAccent = { 0x3b, 0x82, 0xf6, 255 }; // slider handle dot
+	const float kRadiusPx = 5; // corner radius shared by every drawn box
+
+	float Roundness(Rectangle r)
+	{
+		return (2 * kRadiusPx) / (r.width < r.height ? r.width : r.height);
+	}
 }
 
 namespace {
 	bool g_windowReady = false;
+	Font g_font = { 0 };
+
+	// Small icon button ("Hold Out"): a square split vertically into two
+	// tones, evoking the in/out halves the action holds onto.
+	bool DrawButton(Rectangle bounds)
+	{
+		bool hovered = CheckCollisionPointRec(GetMousePosition(), bounds);
+		DrawRectangleRounded(bounds, Roundness(bounds), 0, kBg);
+		DrawRectangleRoundedLinesEx(bounds, Roundness(bounds), 0, 2, kBorder);
+
+		const float kIconSize = 12;
+		Rectangle icon = { bounds.x + (bounds.width - kIconSize) / 2, bounds.y + (bounds.height - kIconSize) / 2, kIconSize, kIconSize };
+		DrawRectangleRec({ icon.x, icon.y, icon.width / 2, icon.height }, kText);
+		DrawRectangleRec({ icon.x + icon.width / 2, icon.y, icon.width / 2, icon.height }, kBorder);
+		DrawRectangleLinesEx(icon, 1, kBorder);
+
+		// GuiButton's old behavior: fires on release-while-hovering, not on
+		// press - so a press that lands on the button doesn't also trigger a
+		// generic "any click dismisses" check elsewhere.
+		return hovered && IsMouseButtonReleased(MOUSE_LEFT_BUTTON);
+	}
+
+	// AE's Bezier/Easy Ease keyframe glyph: an hourglass, two triangles
+	// meeting at a point. Split vertically into a duotone left=in/right=out
+	// half; whichever side the held modifier names brightens, the other dims.
+	void DrawEasingIcon(Rectangle bounds, const char* mode)
+	{
+		const Color kBaseIn = { 0x80, 0x80, 0x80, 255 };
+		const Color kBaseOut = { 0x55, 0x55, 0x55, 255 };
+		Color inColor = kBaseIn, outColor = kBaseOut;
+		if (mode[0] == 'i') { inColor = kText; outColor = Fade(kBaseOut, 0.5f); }
+		else if (mode[0] == 'o') { outColor = kText; inColor = Fade(kBaseIn, 0.5f); }
+
+		float midX = bounds.x + bounds.width / 2;
+		Vector2 topL = { bounds.x, bounds.y };
+		Vector2 topM = { midX, bounds.y };
+		Vector2 topR = { bounds.x + bounds.width, bounds.y };
+		Vector2 botL = { bounds.x, bounds.y + bounds.height };
+		Vector2 botM = { midX, bounds.y + bounds.height };
+		Vector2 botR = { bounds.x + bounds.width, bounds.y + bounds.height };
+		Vector2 center = { midX, bounds.y + bounds.height / 2 };
+
+		DrawTriangle(topL, center, topM, inColor);
+		DrawTriangle(botL, botM, center, inColor);
+		DrawTriangle(topM, center, topR, outColor);
+		DrawTriangle(botM, botR, center, outColor);
+	}
+
+	// Single shape for every slider update sent to AE - the 250ms-polled
+	// in-drag preview and the commit-on-dismiss message are otherwise
+	// identical, just at different points in the gesture. "polling" lets CEP
+	// tell them apart later if it ever needs to (e.g. skip undo-stepping on
+	// the live previews); for now both are handled the same on that end.
+	void SendSliderUpdate(float value, const char* mode, bool polling)
+	{
+		WsSend(std::string(R"({"type":"slider","value":)") + std::to_string((int)value)
+			+ R"(,"mode":")" + mode + R"(","polling":)" + (polling ? "true" : "false") + "}");
+	}
+
+	// Thin round-capped track with a blue dot handle at position t (0-1).
+	void DrawSliderTrack(Rectangle bounds, float t)
+	{
+		const float kThickness = 3;
+		float y = bounds.y + bounds.height / 2;
+		Vector2 left = { bounds.x + kThickness / 2, y };
+		Vector2 right = { bounds.x + bounds.width - kThickness / 2, y };
+		DrawLineEx(left, right, kThickness, kText);
+		DrawCircleV(left, kThickness / 2, kText);
+		DrawCircleV(right, kThickness / 2, kText);
+		DrawCircleV({ bounds.x + t * bounds.width, y }, 6, kAccent);
+	}
 
 	// Fullscreen + transparent: a normal small window stops getting mouse-move
 	// events the instant the cursor leaves its client area (no capture), which
@@ -51,19 +120,17 @@ namespace {
 		SetWindowPosition(-1, -1);
 		SetTargetFPS(60);
 
-		GuiSetStyle(SLIDER, BORDER_COLOR_NORMAL, ColorToInt(kBorder));
-		GuiSetStyle(SLIDER, BORDER_COLOR_FOCUSED, ColorToInt(kBorder));
-		GuiSetStyle(SLIDER, BORDER_COLOR_PRESSED, ColorToInt(kBorder));
-		GuiSetStyle(SLIDER, BASE_COLOR_NORMAL, ColorToInt(kBg));
-		GuiSetStyle(SLIDER, TEXT_COLOR_NORMAL, ColorToInt(kText));
-		GuiSetStyle(SLIDER, TEXT_COLOR_FOCUSED, ColorToInt(kText));
-		GuiSetStyle(SLIDER, TEXT_COLOR_PRESSED, ColorToInt(kText)); // slider handle color while forceDragging (always STATE_PRESSED)
-
 		// ponytail: load at one fixed size (14px) rather than a re-bakeable
 		// size table - bump kFontSize/reload if the popup ever needs another size.
 		const int kFontSize = 14;
-		Font font = LoadFontEx(GetFontPath(), kFontSize, NULL, 0);
-		if (font.texture.id != 0) GuiSetFont(font);
+		g_font = LoadFontEx(GetFontPath(), kFontSize, NULL, 0);
+		if (g_font.texture.id != 0) {
+			// Bilinear, not point (raygui/raylib default): the manual DrawTextEx
+			// calls below scale this font off its baked size (e.g. 10px toast vs
+			// 14px bake), and point-sampling a bitmap font off-scale drops whole
+			// glyph strokes instead of just looking jagged.
+			SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
+		}
 
 		g_windowReady = true;
 	}
@@ -73,16 +140,25 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 {
 	EnsureWindowReady(screenW, screenH);
 
-	const float kPanelW = 220, kPanelH = 84, kPadding = 15, kRadiusPx = 5;
-	const float kRoundness = (2 * kRadiusPx) / (kPanelW < kPanelH ? kPanelW : kPanelH);
+	const float kPanelW = 220, kPanelH = 40, kPadding = 10, kGap = 10, kButtonSize = 20, kIconSize = 16;
 
 	Rectangle panel = { (float)(mouseX - kPanelW / 2), (float)(mouseY - kPanelH / 2), kPanelW, kPanelH };
-	Rectangle sliderBounds = { panel.x + kPadding, panel.y + kPadding, kPanelW - 2 * kPadding, 20 };
-	Rectangle holdButtonBounds = { panel.x + kPadding, sliderBounds.y + sliderBounds.height + 10, kPanelW - 2 * kPadding, 24 };
+	Rectangle holdButtonBounds = { panel.x + kPanelW - kPadding - kButtonSize, panel.y + (kPanelH - kButtonSize) / 2, kButtonSize, kButtonSize };
+	Rectangle easingIconBounds = { panel.x + kPadding, panel.y + (kPanelH - kIconSize) / 2, kIconSize, kIconSize };
+	Rectangle sliderBounds = { easingIconBounds.x + kIconSize + kGap, panel.y + (kPanelH - 16) / 2, holdButtonBounds.x - kGap - (easingIconBounds.x + kIconSize + kGap), 16 };
 	float sliderValue = 0.0f;
+	float lastSentValue = -1.0f; // unreachable slider value, forces the first poll tick to send
+	float sendTimer = 0.0f;
 	bool clicked = false;
 	bool holdOutgoing = false;
 	const char* mode = "both";
+
+	// Alt = precision drag: freeze the value/mouseX pair at the moment Alt
+	// goes down, then move at 1/kAltSlowdown speed relative to that anchor instead of
+	// tracking the cursor directly. Releasing Alt snaps straight back to
+	// normal (direct cursor tracking) - no re-anchoring on release.
+	bool altWasDown = false;
+	float altAnchorValue = 0.0f, altAnchorMouseX = 0.0f;
 
 	// Dismissal is explicit (click below, or Esc via WindowShouldClose) - not
 	// focus-based. A background thread re-showing an already-existing window
@@ -92,27 +168,51 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	while (!WindowShouldClose()) {
 		BeginDrawing();
 		ClearBackground(BLANK);
-		DrawRectangleRounded(panel, kRoundness, 0, kBg);
-		DrawRectangleRoundedLinesEx(panel, kRoundness, 0, 2, kBorder);
-		// forceDragging=true: tracks the cursor every frame, no click/hold needed
-		GuiSliderPro(sliderBounds, NULL, NULL, &sliderValue, 0.0f, 100.0f, GuiGetStyle(SLIDER, SLIDER_WIDTH), true);
-
-		// GuiButton fires on mouse-release-while-hovering, not on press - so
-		// a press that lands on the button must be excluded from the generic
-		// "any click dismisses" check below, or the popup closes on the press
-		// frame before the button ever gets its own release-frame click.
-		bool overButton = CheckCollisionPointRec(GetMousePosition(), holdButtonBounds);
-		bool holdButtonClicked = GuiButton(holdButtonBounds, "Hold Out");
-		bool dismissClick = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !overButton;
+		DrawRectangleRounded(panel, Roundness(panel), 0, kBg);
+		DrawRectangleRoundedLinesEx(panel, Roundness(panel), 0, 2, kBorder);
 
 		// Read every frame, not just at commit, so the held modifier always
 		// matches what's drawn.
 		bool ctrlHeld = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
 		bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
 		mode = ctrlHeld ? "in" : (shiftHeld ? "out" : "both");
-		if (mode[0] != 'b') { // "in" or "out" - "both" needs no label
-			DrawText(mode[0] == 'i' ? "In only" : "Out only", (int)panel.x, (int)panel.y - 18, 14, kText);
+		DrawEasingIcon(easingIconBounds, mode);
+
+		bool altDown = IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT);
+		float mouseX = GetMousePosition().x;
+		if (altDown && !altWasDown) {
+			altAnchorValue = sliderValue;
+			altAnchorMouseX = mouseX;
 		}
+		altWasDown = altDown;
+
+		const float kAltSlowdown = 30.0f;
+		float t = altDown
+			? altAnchorValue / 100.0f + (mouseX - altAnchorMouseX) / kAltSlowdown / sliderBounds.width
+			: (mouseX - sliderBounds.x) / sliderBounds.width;
+		t = t < 0 ? 0 : (t > 1 ? 1 : t);
+		sliderValue = t * 100.0f;
+		DrawSliderTrack(sliderBounds, t);
+
+		// Live preview to AE while dragging, separate from the commit-on-dismiss
+		// message below - polled rather than sent every frame so a fast drag
+		// doesn't flood the socket.
+		sendTimer += GetFrameTime();
+		if (sendTimer >= 0.25f) {
+			sendTimer = 0.0f;
+			if (sliderValue != lastSentValue) {
+				SendSliderUpdate(sliderValue, mode, true);
+				lastSentValue = sliderValue;
+			}
+		}
+
+		// DrawButton fires on mouse-release-while-hovering, not on press - so
+		// a press that lands on the button must be excluded from the generic
+		// "any click dismisses" check below, or the popup closes on the press
+		// frame before the button ever gets its own release-frame click.
+		bool overButton = CheckCollisionPointRec(GetMousePosition(), holdButtonBounds);
+		bool holdButtonClicked = DrawButton(holdButtonBounds);
+		bool dismissClick = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !overButton;
 		EndDrawing();
 
 		if (holdButtonClicked) {
@@ -130,7 +230,7 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	if (holdOutgoing) {
 		WsSend(R"({"type":"holdOutgoing"})");
 	} else if (clicked) {
-		WsSend(std::string(R"({"type":"slider","value":)") + std::to_string((int)sliderValue) + R"(,"mode":")" + mode + "\"}");
+		SendSliderUpdate(sliderValue, mode, false);
 	}
 }
 
@@ -138,8 +238,7 @@ void RunNoSelectionToast(int mouseX, int mouseY, int screenW, int screenH)
 {
 	EnsureWindowReady(screenW, screenH);
 
-	const float kPanelW = 240, kPanelH = 40, kRadiusPx = 5;
-	const float kRoundness = (2 * kRadiusPx) / (kPanelW < kPanelH ? kPanelW : kPanelH);
+	const float kPanelW = 240, kPanelH = 40;
 	Rectangle panel = { (float)(mouseX - kPanelW / 2), (float)(mouseY - kPanelH / 2), kPanelW, kPanelH };
 
 	const float kLifetimeSec = 1.0f;
@@ -148,9 +247,9 @@ void RunNoSelectionToast(int mouseX, int mouseY, int screenW, int screenH)
 		float alpha = 1.0f - (elapsed / kLifetimeSec);
 		BeginDrawing();
 		ClearBackground(BLANK);
-		DrawRectangleRounded(panel, kRoundness, 0, Fade(kBg, alpha));
-		DrawRectangleRoundedLinesEx(panel, kRoundness, 0, 2, Fade(kBorder, alpha));
-		DrawText("No keyframes are selected", (int)panel.x + 12, (int)(panel.y + panel.height / 2 - 5), 10, Fade(kText, alpha));
+		DrawRectangleRounded(panel, Roundness(panel), 0, Fade(kBg, alpha));
+		DrawRectangleRoundedLinesEx(panel, Roundness(panel), 0, 2, Fade(kBorder, alpha));
+		DrawTextEx(g_font, "No keyframes are selected", { panel.x + 12, panel.y + panel.height / 2 - 5 }, 10, 0, Fade(kText, alpha));
 		EndDrawing();
 
 		if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) break; // explicit dismiss still works
