@@ -118,6 +118,12 @@ namespace {
 		InitWindow(screenW + 2, screenH + 2, "popup");
 		SetWindowPosition(-1, -1);
 		SetTargetFPS(60);
+		// Esc must not drive WindowShouldClose(): that flag latches true
+		// permanently once set and raylib exposes no way to clear it, so since
+		// this window is reused across popups instead of recreated, the very
+		// next popup's loop would see it pre-closed and exit on frame 0. Esc is
+		// handled manually below instead.
+		SetExitKey(KEY_NULL);
 
 		// ponytail: load at one fixed size (14px) rather than a re-bakeable
 		// size table - bump kFontSize/reload if the popup ever needs another size.
@@ -159,12 +165,13 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	bool altWasDown = false;
 	float altAnchorValue = 0.0f, altAnchorMouseX = 0.0f;
 
-	// Dismissal is explicit (click below, or Esc via WindowShouldClose) - not
-	// focus-based. A background thread re-showing an already-existing window
-	// can get silently denied by Windows' foreground-lock policy (unlike a
-	// freshly created one), which made IsWindowFocused() go false almost
-	// immediately and hide the popup ~10 frames in regardless of the user.
-	while (!WindowShouldClose()) {
+	// Dismissal is explicit (click below, or Esc) - not focus-based. A
+	// background thread re-showing an already-existing window can get
+	// silently denied by Windows' foreground-lock policy (unlike a freshly
+	// created one), which made IsWindowFocused() go false almost immediately
+	// and hide the popup ~10 frames in regardless of the user.
+	bool escPressed = false;
+	while (!WindowShouldClose() && !escPressed) {
 		BeginDrawing();
 		ClearBackground(BLANK);
 		DrawRectangleRounded(panel, Roundness(panel), 0, kBg);
@@ -222,6 +229,9 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 			clicked = true;
 			break;
 		}
+		if (IsKeyPressed(KEY_ESCAPE)) {
+			escPressed = true;
+		}
 	}
 
 	SetWindowState(FLAG_WINDOW_HIDDEN);
@@ -231,9 +241,9 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 	} else if (clicked) {
 		SendSliderUpdate(sliderValue, mode, false);
 	} else {
-		// Loop only exits without holdOutgoing/clicked via WindowShouldClose's
-		// own Esc check - tell CEP to put the keyframes back the way it found
-		// them (it kept the pre-drag snapshot from the preview ticks).
+		// Loop exits without holdOutgoing/clicked via Esc - tell CEP to put the
+		// keyframes back the way it found them (it kept the pre-drag snapshot
+		// from the preview ticks).
 		WsSend(R"({"type":"cancel"})");
 	}
 }
@@ -247,7 +257,7 @@ void RunNoSelectionToast(int mouseX, int mouseY, int screenW, int screenH)
 
 	const float kLifetimeSec = 1.0f;
 	float elapsed = 0.0f;
-	while (!WindowShouldClose() && elapsed < kLifetimeSec) {
+	while (elapsed < kLifetimeSec) {
 		float alpha = 1.0f - (elapsed / kLifetimeSec);
 		BeginDrawing();
 		ClearBackground(BLANK);
