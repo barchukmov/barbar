@@ -1,19 +1,3 @@
-import {
-  helloVoid,
-  helloError,
-  helloStr,
-  helloNum,
-  helloArrayStr,
-  helloObj,
-} from "../utils/samples";
-export { helloError, helloStr, helloNum, helloArrayStr, helloObj, helloVoid };
-import { dispatchTS } from "../utils/utils";
-
-export const helloWorld = () => {
-  alert("Hello from After Effects!");
-  app.project.activeItem;
-};
-
 // Shared by isAnyKeyframeSelected/setOutgoingHandleHold - they both need the
 // same selected-layers -> selected-properties walk.
 const forEachSelectedProperty = (fn: (prop: any) => void) => {

@@ -151,8 +151,15 @@
 <style lang="scss">
   @use "../variables.scss" as *;
   .app {
-    padding: 16px;
+    padding: 10px;
+    width: 100%;
+    box-sizing: border-box;
     color: white;
+    font-size: 0.85rem;
+  }
+  .app-header h2 {
+    margin: 0 0 8px;
+    font-size: 1rem;
   }
   .shortcut-list {
     list-style: none;
@@ -196,7 +203,7 @@
       cursor: pointer;
     }
     pre {
-      max-height: 200px;
+      max-height: 100px;
       overflow: auto;
       background: #111;
       padding: 8px;
