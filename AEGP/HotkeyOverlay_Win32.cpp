@@ -14,12 +14,20 @@ namespace {
 	// must be applied on this thread - RegisterHotKey/UnregisterHotKey are
 	// tied to the thread whose message queue receives WM_HOTKEY.
 	const UINT kHotkeysUpdatedMsg = WM_APP + 1;
+	// Polls GetForegroundWindow so the hotkeys can be unregistered while AE
+	// isn't focused - see kForegroundPollTimerId below.
+	const UINT kForegroundPollTimerId = 1;
+	const UINT kForegroundPollMs = 250;
 
 	HANDLE g_thread = NULL;
 	DWORD g_threadId = 0;
 
 	// Only ever touched on the overlay thread (ThreadProc), so no lock needed.
 	std::unordered_map<int, std::string> g_idToFn;
+	// Last payload applied, kept around so the foreground-poll timer can
+	// re-register the same table once AE regains focus.
+	std::string g_lastPayload;
+	bool g_registered = false;
 
 	struct Binding { int id; UINT vkey; UINT mods; std::string fn; };
 }
@@ -45,10 +53,22 @@ namespace {
 		return out;
 	}
 
-	void ApplyHotkeyTable(const std::string& payload)
+	void UnregisterAllHotkeys()
 	{
 		for (auto& entry : g_idToFn) UnregisterHotKey(NULL, entry.first);
 		g_idToFn.clear();
+		g_registered = false;
+	}
+
+	// RegisterHotKey is global - the instant a combo is registered, Windows
+	// swallows it for every app, not just AE, before any of our own
+	// foreground checks run. So the table must only be registered while AE is
+	// actually the foreground app; ForegroundPollTick (driven by a timer)
+	// calls this/UnregisterAllHotkeys as focus changes, instead of keeping
+	// the keys grabbed system-wide all the time.
+	void ApplyHotkeyTable(const std::string& payload)
+	{
+		UnregisterAllHotkeys();
 
 		for (auto& b : ParseHotkeyPayload(payload)) {
 			UINT winMods = MOD_NOREPEAT;
@@ -58,6 +78,24 @@ namespace {
 			if (RegisterHotKey(NULL, b.id, winMods, b.vkey)) {
 				g_idToFn[b.id] = b.fn;
 			}
+		}
+		g_registered = true;
+	}
+
+	bool IsAeForeground()
+	{
+		DWORD fgPid = 0;
+		GetWindowThreadProcessId(GetForegroundWindow(), &fgPid);
+		return fgPid == GetCurrentProcessId();
+	}
+
+	void ForegroundPollTick()
+	{
+		bool aeForeground = IsAeForeground();
+		if (aeForeground && !g_registered && !g_lastPayload.empty()) {
+			ApplyHotkeyTable(g_lastPayload);
+		} else if (!aeForeground && g_registered) {
+			UnregisterAllHotkeys();
 		}
 	}
 
@@ -83,19 +121,22 @@ namespace {
 
 	DWORD WINAPI ThreadProc(LPVOID)
 	{
+		SetTimer(NULL, kForegroundPollTimerId, kForegroundPollMs, NULL);
+
 		MSG msg;
 		while (GetMessage(&msg, NULL, 0, 0)) {
 			if (msg.message == kHotkeysUpdatedMsg) {
 				std::string* payload = reinterpret_cast<std::string*>(msg.lParam);
-				ApplyHotkeyTable(*payload);
+				g_lastPayload = *payload;
 				delete payload;
+				// Only actually grab the keys if AE is foreground right now -
+				// otherwise wait for ForegroundPollTick to do it once it is.
+				if (IsAeForeground()) ApplyHotkeyTable(g_lastPayload);
+			} else if (msg.message == WM_TIMER && msg.wParam == kForegroundPollTimerId) {
+				ForegroundPollTick();
 			} else if (msg.message == WM_HOTKEY) {
 				auto it = g_idToFn.find((int)msg.wParam);
 				if (it == g_idToFn.end()) continue;
-
-				DWORD fgPid = 0;
-				GetWindowThreadProcessId(GetForegroundWindow(), &fgPid);
-				if (fgPid != GetCurrentProcessId()) continue;
 
 				POINT pt;
 				GetCursorPos(&pt);
@@ -105,7 +146,8 @@ namespace {
 			}
 		}
 
-		for (auto& entry : g_idToFn) UnregisterHotKey(NULL, entry.first);
+		KillTimer(NULL, kForegroundPollTimerId);
+		UnregisterAllHotkeys();
 		ClosePopupWindow(); // same thread that created it - must tear down here, not from DeathHook's thread
 		return 0;
 	}
