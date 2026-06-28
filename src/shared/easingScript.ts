@@ -45,7 +45,6 @@ try {
       var targetType = INF === 0 ? KeyframeInterpolationType.LINEAR : KeyframeInterpolationType.BEZIER;
       var inType = MODE !== "out" ? targetType : pr.keyInInterpolationType(keyIndex);
       var outType = MODE !== "in" ? targetType : pr.keyOutInterpolationType(keyIndex);
-      pr.setInterpolationTypeAtKey(keyIndex, inType, outType);
 
       if (targetType === KeyframeInterpolationType.BEZIER) {
         var currentIn = pr.keyInTemporalEase(keyIndex);
@@ -58,6 +57,10 @@ try {
         }
         pr.setTemporalEaseAtKey(keyIndex, easeIn, easeOut);
       }
+      // setTemporalEaseAtKey forces BOTH sides to Bezier as a side effect,
+      // even when only one side's ease array actually changed - reassert
+      // the per-side types last so the untouched side (e.g. Linear) sticks.
+      pr.setInterpolationTypeAtKey(keyIndex, inType, outType);
     }
   }
 } finally {
