@@ -11,7 +11,6 @@
 #include "win32_popup_bridge.h"
 #include "WsClient.h"
 #include <string>
-#include <windows.h>
 
 namespace {
 	const Color kBorder = { 0x00, 0x00, 0x00, 255 };
@@ -21,22 +20,6 @@ namespace {
 
 namespace {
 	bool g_windowReady = false;
-
-	// build.ps1 copies Mannin-Regular.otf into a "Fonts" folder next to the
-	// .aex - find that folder via this function's own module (the plugin
-	// DLL), not the AE.exe path, since LoadFontEx needs an absolute path.
-	std::string FontPath()
-	{
-		HMODULE module = nullptr;
-		GetModuleHandleExA(
-			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-			(LPCSTR)&FontPath, &module);
-		char path[MAX_PATH];
-		GetModuleFileNameA(module, path, MAX_PATH);
-		std::string dir(path);
-		dir = dir.substr(0, dir.find_last_of("\\/"));
-		return dir + "\\Fonts\\Mannin-Regular.otf";
-	}
 
 	// Fullscreen + transparent: a normal small window stops getting mouse-move
 	// events the instant the cursor leaves its client area (no capture), which
@@ -79,7 +62,7 @@ namespace {
 		// ponytail: load at one fixed size (14px) rather than a re-bakeable
 		// size table - bump kFontSize/reload if the popup ever needs another size.
 		const int kFontSize = 14;
-		Font font = LoadFontEx(FontPath().c_str(), kFontSize, NULL, 0);
+		Font font = LoadFontEx(GetFontPath(), kFontSize, NULL, 0);
 		if (font.texture.id != 0) GuiSetFont(font);
 
 		g_windowReady = true;
