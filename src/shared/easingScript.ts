@@ -45,6 +45,48 @@ function easeCount(prop, keyIndex) {
   if (ease.length < 1) return 1;
   return ease.length;
 }
+function propId(prop) {
+  var layer = prop.propertyGroup(prop.propertyDepth);
+  return layer.index + "|" + prop.name + "|" + prop.propertyIndex;
+}
+// A monotonic run is a maximal stretch of selected, consecutively-increasing
+// or consecutively-decreasing keyframe values. Its interior keys (not the
+// run's own first/last) get continuous bezier instead of the slider's ease -
+// AE derives their tangent direction from the neighbors, which reads as the
+// smooth case for an otherwise straight ascending/descending stretch.
+// Non-numeric values (e.g. Position) can't be compared, so they never join a
+// run - everything just keeps the normal ease behavior.
+function diffSign(a, b) {
+  if (a === null || b === null) return 0;
+  if (b > a) return 1;
+  if (b < a) return -1;
+  return 0;
+}
+function computeInteriorRunFlags(prop, keyIndices) {
+  var n = keyIndices.length;
+  var flags = [];
+  for (var i = 0; i < n; i++) flags.push(false);
+  if (n < 3) return flags;
+
+  var values = [];
+  for (var i = 0; i < n; i++) {
+    var v = prop.keyValue(keyIndices[i]);
+    values.push(typeof v === "number" ? v : null);
+  }
+
+  var i = 0;
+  while (i < n - 1) {
+    var dir = diffSign(values[i], values[i + 1]);
+    if (dir === 0) { i++; continue; }
+    var runStart = i;
+    var j = i + 1;
+    while (j < n - 1 && diffSign(values[j], values[j + 1]) === dir) j++;
+    var runEnd = j + 1; // last index in the run, inclusive
+    for (var k = runStart + 1; k < runEnd; k++) flags[k] = true;
+    i = runEnd;
+  }
+  return flags;
+}
 app.beginUndoGroup("Ease Keyframes");
 try {
   for (var p = 0; p < props.length; p++) {
@@ -53,6 +95,16 @@ try {
     var ks = copySelectedKeys(pr);
     var keyCount = ks.length;
     if (keyCount < 1) continue;
+
+    // Computed once per property per drag (cached on MEM, same lifetime as
+    // the per-key snapshots below) rather than re-walked on every poll tick.
+    var runFlagsId = "runs:" + propId(pr);
+    var runFlags = MEM[runFlagsId];
+    if (!runFlags) {
+      runFlags = computeInteriorRunFlags(pr, ks);
+      MEM[runFlagsId] = runFlags;
+    }
+
     for (var k = 0; k < keyCount; k++) {
       var keyIndex = ks[k];
       var count = easeCount(pr, keyIndex);
@@ -66,7 +118,8 @@ try {
           inType: pr.keyInInterpolationType(keyIndex),
           outType: pr.keyOutInterpolationType(keyIndex),
           inEase: pr.keyInTemporalEase(keyIndex),
-          outEase: pr.keyOutTemporalEase(keyIndex)
+          outEase: pr.keyOutTemporalEase(keyIndex),
+          continuous: pr.keyTemporalContinuous(keyIndex)
         };
         MEM[id] = snap;
       }
@@ -74,6 +127,13 @@ try {
       // KeyframeEase's influence must be 0.1-100 - INF=0 means "linear", not
       // "zero-influence bezier", so that case skips ease entirely.
       var targetType = INF === 0 ? KeyframeInterpolationType.LINEAR : KeyframeInterpolationType.BEZIER;
+
+      if (runFlags[k] && targetType === KeyframeInterpolationType.BEZIER) {
+        pr.setInterpolationTypeAtKey(keyIndex, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+        pr.keyTemporalContinuous(keyIndex, true);
+        continue;
+      }
+
       var inType = MODE !== "out" ? targetType : snap.inType;
       var outType = MODE !== "in" ? targetType : snap.outType;
 
@@ -117,10 +177,14 @@ export const CANCEL_EASE_SCRIPT = `if ($.__easeMemory) {
   try {
     for (var id in $.__easeMemory) {
       var snap = $.__easeMemory[id];
+      // "runs:"-prefixed entries are cached interior-run flag arrays, not
+      // per-key snapshots - nothing to restore for those.
+      if (!snap || !snap.prop) continue;
       snap.prop.setTemporalEaseAtKey(snap.keyIndex, snap.inEase, snap.outEase);
       // setTemporalEaseAtKey forces both sides to Bezier as a side effect -
       // reassert the original types last so they stick.
       snap.prop.setInterpolationTypeAtKey(snap.keyIndex, snap.inType, snap.outType);
+      snap.prop.keyTemporalContinuous(snap.keyIndex, snap.continuous);
     }
   } finally {
     app.endUndoGroup();
