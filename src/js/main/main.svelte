@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { subscribeBackgroundColor, evalTS } from "../lib/utils/bolt";
+  import { subscribeBackgroundColor, evalES } from "../lib/utils/bolt";
+  import { buildEaseScript } from "../../shared/easingScript";
   import {
     loadHotkeyTable,
     saveHotkeyTable,
@@ -117,9 +118,13 @@
     {#if clashWarning}
       <p class="clash-warning">{clashWarning}</p>
     {/if}
-    <button class="ease-btn" onclick={() => evalTS("applyEasing", 70, "both")}>
+    <button class="ease-btn" onclick={() => evalES(buildEaseScript(70), true)}>
       Ease 70%
     </button>
+    <details class="ease-script">
+      <summary>Script run by "Ease 70%"</summary>
+      <pre>{buildEaseScript(70)}</pre>
+    </details>
   </header>
 </div>
 
@@ -150,5 +155,21 @@
     margin-top: 12px;
     width: 100%;
     padding: 6px 0;
+  }
+  .ease-script {
+    margin-top: 8px;
+    text-align: left;
+    font-size: 0.75rem;
+    summary {
+      cursor: pointer;
+    }
+    pre {
+      max-height: 200px;
+      overflow: auto;
+      background: #111;
+      padding: 8px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+    }
   }
 </style>

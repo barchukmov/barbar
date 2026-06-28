@@ -1,7 +1,21 @@
 $ErrorActionPreference = 'Stop'
 
-Write-Host "== Killing After Effects =="
-Get-Process AfterFX -ErrorAction SilentlyContinue | Stop-Process -Force
+# CloseMainWindow asks the app to quit through its own message loop (same as
+# clicking the title-bar X), giving it a chance to release file locks on
+# AegpDemo.aex cleanly - a hard Stop-Process can leave Premiere/AE holding
+# the handle a moment longer, which is what broke the last build (LNK1168).
+function Close-Gracefully($processName) {
+  $procs = Get-Process $processName -ErrorAction SilentlyContinue
+  if (-not $procs) { return }
+  $procs | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+  $procs | Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
+  # Still running after 15s (e.g. blocked on its own "Save changes?" prompt) - fall back to a hard kill.
+  Get-Process $processName -ErrorAction SilentlyContinue | Stop-Process -Force
+}
+
+Write-Host "== Closing After Effects and Premiere Pro =="
+Close-Gracefully "AfterFX"
+Close-Gracefully "Adobe Premiere Pro"
 Start-Sleep -Milliseconds 500
 
 Write-Host "== Building =="
