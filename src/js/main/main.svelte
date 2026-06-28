@@ -118,9 +118,16 @@
     {#if clashWarning}
       <p class="clash-warning">{clashWarning}</p>
     {/if}
-    <button class="ease-btn" onclick={() => evalES(buildEaseScript(70), true)}>
+    <button
+      class="ease-btn"
+      onclick={(e) => {
+        const mode = e.ctrlKey ? "in" : e.shiftKey ? "out" : "both";
+        evalES(buildEaseScript(70, mode), true);
+      }}
+    >
       Ease 70%
     </button>
+    <p class="ease-hint">Ctrl = in only · Shift = out only</p>
     <details class="ease-script">
       <summary>Script run by "Ease 70%"</summary>
       <pre>{buildEaseScript(70)}</pre>
@@ -155,6 +162,11 @@
     margin-top: 12px;
     width: 100%;
     padding: 6px 0;
+  }
+  .ease-hint {
+    margin: 4px 0 0;
+    font-size: 0.7rem;
+    color: $font;
   }
   .ease-script {
     margin-top: 8px;
