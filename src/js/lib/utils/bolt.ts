@@ -2,6 +2,7 @@ import CSInterface, { CSEvent } from "../cep/csinterface";
 import Vulcan, { VulcanMessage } from "../cep/vulcan";
 import { ns } from "../../../shared/shared";
 import { fs } from "../cep/node";
+import { startWsServer, onAegpMessage } from "../ws-server";
 
 export const csi = new CSInterface();
 export const vulcan = new Vulcan();
@@ -214,6 +215,10 @@ export const initBolt = (log = true) => {
       evalFile(jsxBinSrc);
     }
     initializeCEP();
+    startWsServer();
+    onAegpMessage((msg) => {
+      if (msg?.type === "slider") evalES(`alert(${Number(msg.value)})`, true);
+    });
   }
 };
 

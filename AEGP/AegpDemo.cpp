@@ -23,6 +23,8 @@
 #include "AegpDemo.h"
 #ifdef AE_OS_WIN
 #include "HotkeyOverlay.h"
+#include "WsClient.h"
+#include <windows.h>
 #endif
 
 class AegpDemo
@@ -117,6 +119,9 @@ public:
 
 #ifdef AE_OS_WIN
 		StartHotkeyOverlay();
+		StartWsClient("ws://127.0.0.1:41420", [](const std::string& msg) {
+			OutputDebugStringA(("[ws] " + msg + "\n").c_str());
+		});
 #endif
 	 }
 																		 
@@ -155,6 +160,7 @@ public:
 	{
 #ifdef AE_OS_WIN
 		StopHotkeyOverlay();
+		StopWsClient();
 #endif
 	}
 };

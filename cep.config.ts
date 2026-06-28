@@ -42,6 +42,18 @@ const config: CEP_Config = {
       width: 300,
       height: 160,
     },
+    {
+      // No UI - just keeps the ws server (AEGP<->CEP) alive from AE launch,
+      // independent of whether main/floating are open. floating.svelte closes
+      // itself on blur, so it can't be relied on for this.
+      mainPath: "./main/index.html",
+      name: "background",
+      panelDisplayName: "",
+      autoVisible: true,
+      type: "Custom",
+      width: 1,
+      height: 1,
+    },
   ],
   build: {
     jsxBin: "off",
@@ -60,7 +72,7 @@ const config: CEP_Config = {
     sourceMap: false,
     jsxBin: "off",
   },
-  installModules: [],
+  installModules: ["ws"],
   copyAssets: [],
   copyZipAssets: [],
 };
