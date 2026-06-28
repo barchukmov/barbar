@@ -7,9 +7,9 @@
 
 3. [DONE] **ExtendScript: monotonic runs -> continuous bezier.** Implemented in [easingScript.ts](src/shared/easingScript.ts) - run membership cached on `$.__easeMemory` once per property per drag.
 
-4. **CEP UI cleanup.** Strip the Panelator/AEGP boilerplate panel. Make the UI minimal and responsive, sized to its smallest acceptable footprint - it's a panel that's rarely looked at, so it should be okay being tiny.
+4. [DONE] **CEP UI cleanup.** Main panel default size dropped from 600x650 to 280x240, CSS tightened, and the unused Bolt-CEP scaffold sample/helloWorld ExtendScript functions deleted ([cep.config.ts](cep.config.ts), [main.svelte](src/js/main/main.svelte), [aeft.ts](src/jsx/aeft/aeft.ts)). Left the "floating" and "background" panels alone - both are load-bearing (background keeps the WS server alive independent of panel visibility; floating is real infra even though its content is currently a placeholder), and removing either is a product call, not a cleanup.
 
-5. **Raylib icons: switch to SVG.** Replace whatever icon approach the Raylib popup currently uses with SVG-based icons.
+5. **Raylib icons: switch to SVG. Skipped, flagging instead of guessing.** The current icons (split-square "hold" button, hourglass easing glyph) are drawn as native raylib shapes (DrawRectangleRec/DrawTriangle) - already vector, crisp at any size, zero dependencies. Doing this for real needs: vendoring an SVG rasterizer (e.g. nanosvg, not currently in Vendor/ and not network-fetchable from this session), actual .svg icon artwork (a design decision, not a mechanical port), and visual QA in the live popup window that can't be done headlessly. Converting today's shapes 1:1 into SVG paths would only add a rasterize-to-bitmap step for no visual gain. Worth doing once there's real icon artwork to bring in - until then this is a placeholder-icon problem, not an SVG problem.
 
 6. [DONE - already fixed in a415c9b] **Fix interpolation-type bug on in/out.** `setInterpolationTypeAtKey` is reasserted after `setTemporalEaseAtKey` so the untouched side's type sticks.
 
