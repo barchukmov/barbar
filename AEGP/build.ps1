@@ -63,6 +63,10 @@ New-Item -ItemType Directory -Force "Vendor\IXWebSocket\lib\$Configuration" | Ou
 Copy-Item -Force "$ixwsInclude\*.h" 'Vendor\IXWebSocket\include\ixwebsocket\'
 Copy-Item -Force $ixwsLib "Vendor\IXWebSocket\lib\$Configuration\ixwebsocket.lib"
 
+Write-Host "== Ship popup font next to the .aex =="
+New-Item -ItemType Directory -Force "$OutDir\Fonts" | Out-Null
+Copy-Item -Force 'Resources\Fonts\Mannin-Regular.otf' "$OutDir\Fonts\"
+
 Write-Host "== Build AegpDemo.vcxproj =="
 # a single trailing backslash escapes the closing quote in MSBuild's argv parsing
 # and swallows the next argument - double it so the quote closes correctly.

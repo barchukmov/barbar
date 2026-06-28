@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { subscribeBackgroundColor } from "../lib/utils/bolt";
+  import { subscribeBackgroundColor, evalTS } from "../lib/utils/bolt";
   import {
     loadHotkeyTable,
     saveHotkeyTable,
@@ -117,6 +117,9 @@
     {#if clashWarning}
       <p class="clash-warning">{clashWarning}</p>
     {/if}
+    <button class="ease-btn" onclick={() => evalTS("applyEasing", 70, "both")}>
+      Ease 70%
+    </button>
   </header>
 </div>
 
@@ -142,5 +145,10 @@
   }
   .clash-warning {
     color: #ff6b6b;
+  }
+  .ease-btn {
+    margin-top: 12px;
+    width: 100%;
+    padding: 6px 0;
   }
 </style>
