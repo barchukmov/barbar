@@ -121,6 +121,9 @@ public:
 		StartHotkeyOverlay();
 		StartWsClient("ws://127.0.0.1:41420", [](const std::string& msg) {
 			OutputDebugStringA(("[ws] " + msg + "\n").c_str());
+			if (WsJsonGetString(msg, "type") == "hotkeys") {
+				UpdateHotkeyTable(WsJsonGetString(msg, "payload"));
+			}
 		});
 #endif
 	 }
