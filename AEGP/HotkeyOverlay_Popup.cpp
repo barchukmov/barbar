@@ -67,13 +67,15 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 {
 	EnsureWindowReady(screenW, screenH);
 
-	const float kPanelW = 220, kPanelH = 50, kPadding = 15, kRadiusPx = 5;
+	const float kPanelW = 220, kPanelH = 84, kPadding = 15, kRadiusPx = 5;
 	const float kRoundness = (2 * kRadiusPx) / (kPanelW < kPanelH ? kPanelW : kPanelH);
 
 	Rectangle panel = { (float)(mouseX - kPanelW / 2), (float)(mouseY - kPanelH / 2), kPanelW, kPanelH };
-	Rectangle sliderBounds = { panel.x + kPadding, panel.y + kPadding, kPanelW - 2 * kPadding, kPanelH - 2 * kPadding };
+	Rectangle sliderBounds = { panel.x + kPadding, panel.y + kPadding, kPanelW - 2 * kPadding, 20 };
+	Rectangle holdButtonBounds = { panel.x + kPadding, sliderBounds.y + sliderBounds.height + 10, kPanelW - 2 * kPadding, 24 };
 	float sliderValue = 0.0f;
 	bool clicked = false;
+	bool holdOutgoing = false;
 	const char* mode = "both";
 
 	// Dismissal is explicit (click below, or Esc via WindowShouldClose) - not
@@ -88,7 +90,15 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 		DrawRectangleRoundedLinesEx(panel, kRoundness, 0, 2, kBorder);
 		// forceDragging=true: tracks the cursor every frame, no click/hold needed
 		GuiSliderPro(sliderBounds, NULL, NULL, &sliderValue, 0.0f, 100.0f, GuiGetStyle(SLIDER, SLIDER_WIDTH), true);
-		bool clickedThisFrame = IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+
+		// GuiButton fires on mouse-release-while-hovering, not on press - so
+		// a press that lands on the button must be excluded from the generic
+		// "any click dismisses" check below, or the popup closes on the press
+		// frame before the button ever gets its own release-frame click.
+		bool overButton = CheckCollisionPointRec(GetMousePosition(), holdButtonBounds);
+		bool holdButtonClicked = GuiButton(holdButtonBounds, "Hold Out");
+		bool dismissClick = IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !overButton;
+
 		// Read every frame, not just at commit, so the held modifier always
 		// matches what's drawn (see HotkeyOverlay_Popup's mode label, task #6).
 		bool ctrlHeld = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
@@ -96,7 +106,11 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 		mode = ctrlHeld ? "in" : (shiftHeld ? "out" : "both");
 		EndDrawing();
 
-		if (clickedThisFrame) {
+		if (holdButtonClicked) {
+			holdOutgoing = true;
+			break;
+		}
+		if (dismissClick) {
 			clicked = true;
 			break;
 		}
@@ -104,7 +118,9 @@ void RunPopupAtCursor(int mouseX, int mouseY, int screenW, int screenH)
 
 	SetWindowState(FLAG_WINDOW_HIDDEN);
 
-	if (clicked) {
+	if (holdOutgoing) {
+		WsSend(R"({"type":"holdOutgoing"})");
+	} else if (clicked) {
 		WsSend(std::string(R"({"type":"slider","value":)") + std::to_string((int)sliderValue) + R"(,"mode":")" + mode + "\"}");
 	}
 }
