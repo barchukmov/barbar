@@ -111,7 +111,7 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;..\Vendor\nanosvg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MSWindows;WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <StructMemberAlignment>Default</StructMemberAlignment>
@@ -164,7 +164,7 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;..\Vendor\nanosvg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MSWindows;WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <StructMemberAlignment>Default</StructMemberAlignment>
@@ -217,7 +217,7 @@
     </Midl>
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
-      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;..\Vendor\nanosvg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <StructMemberAlignment>Default</StructMemberAlignment>
@@ -271,7 +271,7 @@
     </Midl>
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
-      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;..\Headers;..\Headers\SP;..\Headers\Win;..\Resources;..\Util;..\Vendor\raylib\include;..\Vendor\IXWebSocket\include;..\Vendor\nanosvg;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>MSWindows;WIN32;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <StructMemberAlignment>Default</StructMemberAlignment>

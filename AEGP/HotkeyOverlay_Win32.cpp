@@ -21,6 +21,10 @@ namespace {
 
 	HANDLE g_thread = NULL;
 	DWORD g_threadId = 0;
+	// Signaled by ThreadProc once its message queue exists; kept alive for the
+	// plugin's lifetime (closed in StopHotkeyOverlay) so ThreadProc can never
+	// signal a handle that a timed-out StartHotkeyOverlay already closed.
+	HANDLE g_queueReady = NULL;
 
 	// Only ever touched on the overlay thread (ThreadProc), so no lock needed.
 	std::unordered_map<int, std::string> g_idToFn;
@@ -101,7 +105,7 @@ namespace {
 
 	// Function names AEGP can run itself vs. forwarding to CEP over WS.
 	// Just "Easing" today - see RunNativeFunction's caller for the fallback.
-	bool RunNativeFunction(const std::string& fn, int x, int y, int screenW, int screenH)
+	bool RunNativeFunction(const std::string& fn, int x, int y, const RECT& monitor)
 	{
 		if (fn == "Easing") {
 			std::string reply = WsRequest(R"({"type":"keyframeSelectionQuery"})", "keyframeSelectionReply", 300);
@@ -109,18 +113,28 @@ namespace {
 			// connected yet) is treated as "selected" - this is a UX nicety,
 			// not a guarantee, so erring toward showing the popup is right.
 			bool selected = reply.empty() || WsJsonGetString(reply, "selected") != "false";
+			int monW = monitor.right - monitor.left;
+			int monH = monitor.bottom - monitor.top;
 			if (selected) {
-				RunPopupAtCursor(x, y, screenW, screenH);
+				RunPopupAtCursor(x, y, monitor.left, monitor.top, monW, monH);
 			} else {
-				RunNoSelectionToast(x, y, screenW, screenH);
+				RunNoSelectionToast(x, y, monitor.left, monitor.top, monW, monH);
 			}
 			return true;
 		}
 		return false;
 	}
 
-	DWORD WINAPI ThreadProc(LPVOID)
+	DWORD WINAPI ThreadProc(LPVOID queueReadyEvent)
 	{
+		// A thread has no message queue until its first User32 call - and
+		// PostThreadMessage to a queue-less thread just fails. Force the queue
+		// into existence, then release StartHotkeyOverlay, so an
+		// UpdateHotkeyTable racing in right after startup can't be dropped.
+		MSG peek;
+		PeekMessageW(&peek, NULL, WM_USER, WM_USER, PM_NOREMOVE);
+		SetEvent((HANDLE)queueReadyEvent);
+
 		SetTimer(NULL, kForegroundPollTimerId, kForegroundPollMs, NULL);
 
 		MSG msg;
@@ -140,7 +154,16 @@ namespace {
 
 				POINT pt;
 				GetCursorPos(&pt);
-				if (!RunNativeFunction(it->second, pt.x, pt.y, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))) {
+				// The overlay must cover the monitor the cursor is on, not the
+				// primary - SM_CXSCREEN/SM_CYSCREEN describe only the primary, so
+				// on a secondary display the popup used to open on the wrong
+				// screen with the cursor "outside" the window.
+				RECT monitor = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+				MONITORINFO mi = { sizeof(MONITORINFO) };
+				if (GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi)) {
+					monitor = mi.rcMonitor;
+				}
+				if (!RunNativeFunction(it->second, pt.x, pt.y, monitor)) {
 					WsSend(R"({"type":"hotkeyTriggered","fn":")" + it->second + "\"}");
 				}
 			}
@@ -148,7 +171,6 @@ namespace {
 
 		KillTimer(NULL, kForegroundPollTimerId);
 		UnregisterAllHotkeys();
-		ClosePopupWindow(); // same thread that created it - must tear down here, not from DeathHook's thread
 		return 0;
 	}
 }
@@ -156,7 +178,11 @@ namespace {
 void StartHotkeyOverlay()
 {
 	if (g_thread) return;
-	g_thread = CreateThread(NULL, 0, ThreadProc, NULL, 0, &g_threadId);
+	g_queueReady = CreateEventW(NULL, TRUE, FALSE, NULL);
+	g_thread = CreateThread(NULL, 0, ThreadProc, g_queueReady, 0, &g_threadId);
+	// Don't return until the thread can actually receive posted messages (or
+	// 2s passes - then we're no worse off than before this wait existed).
+	if (g_thread) WaitForSingleObject(g_queueReady, 2000);
 }
 
 void StopHotkeyOverlay()
@@ -170,10 +196,17 @@ void StopHotkeyOverlay()
 	WaitForSingleObject(g_thread, 2000);
 	CloseHandle(g_thread);
 	g_thread = NULL;
+	if (g_queueReady) {
+		CloseHandle(g_queueReady);
+		g_queueReady = NULL;
+	}
 }
 
 void UpdateHotkeyTable(const std::string& payload)
 {
 	if (!g_threadId) return;
-	PostThreadMessage(g_threadId, kHotkeysUpdatedMsg, 0, (LPARAM)new std::string(payload));
+	std::string* heapPayload = new std::string(payload);
+	if (!PostThreadMessage(g_threadId, kHotkeysUpdatedMsg, 0, (LPARAM)heapPayload)) {
+		delete heapPayload; // post failed - don't leak; CEP re-pushes on every (re)connect
+	}
 }
