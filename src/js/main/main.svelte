@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { subscribeBackgroundColor, evalES } from "../lib/utils/bolt";
-  import { buildEaseScript } from "../../shared/easingScript";
+  import { subscribeBackgroundColor, evalTS } from "../lib/utils/bolt";
   import {
     loadHotkeyTable,
     saveHotkeyTable,
-    sendHotkeyTable,
+    notifyHotkeysChanged,
     loadPollingEnabled,
     savePollingEnabled,
     type HotkeyBinding,
@@ -88,7 +87,7 @@
     );
     listeningId = null;
     saveHotkeyTable(bindings);
-    sendHotkeyTable();
+    notifyHotkeysChanged();
 
     const clash = findClash(aeKeymap, mods, vkey);
     clashWarning = clash ? `Clashes with After Effects' "${clash}"` : null;
@@ -131,7 +130,7 @@
       class="ease-btn"
       onclick={(e) => {
         const mode = e.ctrlKey ? "in" : e.shiftKey ? "out" : "both";
-        evalES(buildEaseScript(70, mode), true);
+        evalTS("applyEase", 70, mode, false);
       }}
     >
       Ease 70%
@@ -141,10 +140,6 @@
       <input type="checkbox" checked={pollingEnabled} onchange={onPollingToggle} />
       Live preview while dragging
     </label>
-    <details class="ease-script">
-      <summary>Script run by "Ease 70%"</summary>
-      <pre>{buildEaseScript(70)}</pre>
-    </details>
   </header>
 </div>
 
@@ -194,21 +189,5 @@
     gap: 6px;
     margin-top: 8px;
     font-size: 0.75rem;
-  }
-  .ease-script {
-    margin-top: 8px;
-    text-align: left;
-    font-size: 0.75rem;
-    summary {
-      cursor: pointer;
-    }
-    pre {
-      max-height: 100px;
-      overflow: auto;
-      background: #111;
-      padding: 8px;
-      border-radius: 4px;
-      white-space: pre-wrap;
-    }
   }
 </style>

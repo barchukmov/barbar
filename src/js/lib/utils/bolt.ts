@@ -3,7 +3,6 @@ import Vulcan, { VulcanMessage } from "../cep/vulcan";
 import { ns } from "../../../shared/shared";
 import { fs } from "../cep/node";
 import { startWsServer, onAegpMessage, sendToAegp, loadPollingEnabled } from "../ws-server";
-import { buildEaseScript, CANCEL_EASE_SCRIPT } from "../../../shared/easingScript";
 
 export const csi = new CSInterface();
 export const vulcan = new Vulcan();
@@ -217,13 +216,19 @@ export const initBolt = (log = true) => {
     }
     initializeCEP();
     startWsServer();
+    // Belt-and-braces for the background panel: its manifest startOnEvents
+    // should load it at AE launch, but if that ever doesn't fire, the first
+    // panel the user opens starts it here so the ws server survives that
+    // panel closing. No-op if it's already running (including when this IS
+    // the background context asking for itself).
+    csi.requestOpenExtension(`${ns}.background`, "");
     onAegpMessage((msg) => {
       if (msg?.type === "polling" && !loadPollingEnabled()) return;
       if (msg?.type === "polling" || msg?.type === "accept") {
         const mode = msg.mode === "in" || msg.mode === "out" ? msg.mode : "both";
-        evalES(buildEaseScript(Number(msg.value), mode, msg.type === "polling"), true);
+        evalTS("applyEase", Number(msg.value), mode, msg.type === "polling");
       }
-      if (msg?.type === "cancel") evalES(CANCEL_EASE_SCRIPT, true);
+      if (msg?.type === "cancel") evalTS("cancelEase");
       if (msg?.type === "holdOutgoing") evalTS("setOutgoingHandleHold");
       if (msg?.type === "keyframeSelectionQuery") {
         evalTS("isAnyKeyframeSelected").then((selected) => {
