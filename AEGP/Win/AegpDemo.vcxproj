@@ -315,7 +315,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\AegpDemo.h" />
-    <ClInclude Include="..\AegpDemoUI.h" />
     <ClInclude Include="..\PT_Err.h" />
     <ClInclude Include="..\Headers\A.h" />
     <ClInclude Include="..\Headers\AE_AdvEffectSuites.h" />
@@ -336,7 +335,6 @@
     <ClInclude Include="..\Util\entry.h" />
     <ClInclude Include="..\Headers\PF_Masks.h" />
     <ClInclude Include="..\Util\String_Utils.h" />
-    <ClInclude Include="AegpDemoUI_Plat.h" />
     <ClInclude Include="..\HotkeyOverlay.h" />
     <ClInclude Include="..\win32_popup_bridge.h" />
     <ClInclude Include="..\WsClient.h" />
@@ -374,11 +372,8 @@ cl /D "MSWindows" /EP $(IntDir)%(Filename).rrc &gt;               "$(ProjectDir)
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Util\AEGP_SuiteHandler.cpp" />
-    <ClCompile Include="AegpDemoUI_Plat.cpp" />
     <ClCompile Include="..\Util\MissingSuiteError.cpp" />
     <ClCompile Include="..\AegpDemo.cpp" />
-    <ClCompile Include="..\AegpDemo_Strings.cpp" />
-    <ClCompile Include="..\AegpDemoUI.cpp" />
     <ClCompile Include="..\HotkeyOverlay_Win32.cpp" />
     <ClCompile Include="..\HotkeyOverlay_Popup.cpp" />
     <ClCompile Include="..\FontPath.cpp" />
