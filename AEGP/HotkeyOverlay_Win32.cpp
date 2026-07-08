@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 #include <sstream>
+#include <fstream>
 #include <cstdlib>
 
 namespace {
@@ -62,6 +63,55 @@ namespace {
 		for (auto& entry : g_idToFn) UnregisterHotKey(NULL, entry.first);
 		g_idToFn.clear();
 		g_registered = false;
+	}
+
+	// Top-level numeric field from a flat JSON object chunk - same hand-rolled
+	// philosophy as WsJsonGetString (small, flat format fully owned by both
+	// ends). Returns -1 when the key is absent.
+	int JsonInt(const std::string& obj, const char* key)
+	{
+		std::string needle = std::string("\"") + key + "\":";
+		size_t pos = obj.find(needle);
+		if (pos == std::string::npos) return -1;
+		return std::atoi(obj.c_str() + pos + needle.size());
+	}
+
+	// The hotkey table's single source of truth is %APPDATA%\barbar-hotkeys.json
+	// - written only by CEP (ws-server.ts, JSON.stringify of
+	// [{id,vkey,mods,fn},...]), read only here. Reading it directly is what
+	// makes hotkeys live from AE launch: the AEGP loads long before any CEP
+	// panel boots, so waiting for the table to arrive over the socket left the
+	// hotkeys dead until a panel came up. Returns false if the file can't be
+	// read (first run before CEP ever saved one) - callers then just keep the
+	// current registration. An empty-but-readable table ("[]") is a valid
+	// "no hotkeys" result. Output format: "id,vkey,mods,fn;..." with mods as
+	// the shared bitmask (bit0=ctrl, bit1=shift, bit2=alt).
+	bool LoadHotkeyPayloadFromFile(std::string& payloadOut)
+	{
+		char appData[MAX_PATH] = { 0 };
+		if (!GetEnvironmentVariableA("APPDATA", appData, MAX_PATH)) return false;
+		std::ifstream file(std::string(appData) + "\\barbar-hotkeys.json");
+		if (!file) return false;
+		std::stringstream buf;
+		buf << file.rdbuf();
+		std::string json = buf.str();
+
+		payloadOut.clear();
+		size_t pos = 0;
+		while (true) {
+			size_t objEnd = json.find('}', pos);
+			if (objEnd == std::string::npos) break;
+			std::string obj = json.substr(pos, objEnd - pos + 1);
+			pos = objEnd + 1;
+			int id = JsonInt(obj, "id");
+			int vkey = JsonInt(obj, "vkey");
+			int mods = JsonInt(obj, "mods"); // 0 (no modifier) is legitimate
+			std::string fn = WsJsonGetString(obj, "fn");
+			if (id < 0 || vkey <= 0 || mods < 0 || fn.empty()) continue;
+			payloadOut += std::to_string(id) + "," + std::to_string(vkey) + ","
+				+ std::to_string(mods) + "," + fn + ";";
+		}
+		return true;
 	}
 
 	// RegisterHotKey is global - the instant a combo is registered, Windows
@@ -137,6 +187,16 @@ namespace {
 
 		SetTimer(NULL, kForegroundPollTimerId, kForegroundPollMs, NULL);
 
+		// Hotkeys are live from AE launch: seed the table straight from the
+		// prefs file instead of waiting for a CEP panel to boot, connect, and
+		// ping. If AE isn't foreground yet, ForegroundPollTick registers it
+		// the moment it is.
+		std::string filePayload;
+		if (LoadHotkeyPayloadFromFile(filePayload)) {
+			g_lastPayload = filePayload;
+			if (IsAeForeground()) ApplyHotkeyTable(g_lastPayload);
+		}
+
 		MSG msg;
 		while (GetMessage(&msg, NULL, 0, 0)) {
 			if (msg.message == kHotkeysUpdatedMsg) {
@@ -202,11 +262,14 @@ void StopHotkeyOverlay()
 	}
 }
 
-void UpdateHotkeyTable(const std::string& payload)
+void ReloadHotkeyTableFromFile()
 {
 	if (!g_threadId) return;
+	// Read here (any thread - just a file read), apply on the overlay thread.
+	std::string payload;
+	if (!LoadHotkeyPayloadFromFile(payload)) return;
 	std::string* heapPayload = new std::string(payload);
 	if (!PostThreadMessage(g_threadId, kHotkeysUpdatedMsg, 0, (LPARAM)heapPayload)) {
-		delete heapPayload; // post failed - don't leak; CEP re-pushes on every (re)connect
+		delete heapPayload; // post failed - don't leak; CEP re-pings on every (re)connect
 	}
 }

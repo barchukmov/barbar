@@ -13,11 +13,14 @@ const PORT = 41420;
 let aegpSocket: import("ws").WebSocket | null = null;
 const listeners = new Set<(msg: any) => void>();
 
-// Hotkey table: CEP is the only reader/writer on disk. AEGP never touches
-// the file - it gets the table pushed over the socket on every connect and
-// every edit, see sendHotkeyTable(). [id, vkey, mods, fn] per binding; mods
-// is a bitmask independent of any OS's MOD_* constants (bit0=ctrl,
-// bit1=shift, bit2=alt) so the wire format doesn't leak Win32 specifics.
+// Hotkey table: the file (%APPDATA%/barbar-hotkeys.json) is the single
+// source of truth and the contract with the AEGP. CEP is its only writer;
+// the AEGP reads it directly - at AE launch (so hotkeys work before any
+// panel exists) and again whenever we ping "hotkeysChanged" over the socket
+// (see LoadHotkeyPayloadFromFile in HotkeyOverlay_Win32.cpp). The table
+// itself never crosses the wire. mods is a bitmask independent of any OS's
+// MOD_* constants (bit0=ctrl, bit1=shift, bit2=alt) so the file format
+// doesn't leak Win32 specifics.
 export type HotkeyBinding = {
   id: number;
   vkey: number;
@@ -51,9 +54,6 @@ export const saveHotkeyTable = (bindings: HotkeyBinding[]) => {
   fs.writeFileSync(hotkeysFile(), JSON.stringify(bindings));
 };
 
-const encodeHotkeyPayload = (bindings: HotkeyBinding[]) =>
-  bindings.map((b) => `${b.id},${b.vkey},${b.mods},${b.fn}`).join(";");
-
 // "Polling" = the live-preview applyEase tick AEGP sends on every slider-drag
 // frame (not just on commit) - some users would rather only see the result
 // on release. Stored separately from the hotkey table since it's a CEP-only
@@ -75,25 +75,25 @@ export const savePollingEnabled = (enabled: boolean) => {
   fs.writeFileSync(settingsFile(), JSON.stringify({ pollingEnabled: enabled }));
 };
 
-// Pushes the current table to AEGP. AEGP always replaces its whole
-// registration on receipt (unregister everything, register fresh) - no
-// diffing - so this is safe to call on every connect and on every edit.
-export const sendHotkeyTable = () => {
-  sendToAegp({ type: "hotkeys", payload: encodeHotkeyPayload(loadHotkeyTable()) });
+// Tells AEGP to re-read the hotkey file. AEGP always replaces its whole
+// registration on a re-read (unregister everything, register fresh) - no
+// diffing - so this is safe to send on every connect and on every edit.
+export const pingHotkeysChanged = () => {
+  loadHotkeyTable(); // creates the default file if missing, so AEGP finds one
+  sendToAegp({ type: "hotkeysChanged" });
 };
 
 // Cross-context "the hotkey file changed" broadcast. The ws server lives in
 // whichever panel context won the port (normally `background`), which is
 // usually NOT the context where the user edits hotkeys (`main`) - a plain
-// sendHotkeyTable() from main would hit a null aegpSocket and silently go
-// nowhere. So the editing panel calls this: push locally (covers the case
+// pingHotkeysChanged() from main would hit a null aegpSocket and silently go
+// nowhere. So the editing panel calls this: ping locally (covers the case
 // where it does own the socket) and dispatch a CSEvent so the owning context
-// re-reads the file and pushes too. Double delivery is harmless - AEGP
-// replaces its whole registration on every receipt.
+// pings too. Double delivery is harmless (see above).
 const hotkeysChangedEvent = "barbar.hotkeysChanged";
 
 export const notifyHotkeysChanged = () => {
-  sendHotkeyTable();
+  pingHotkeysChanged();
   csi.dispatchEvent(new CSEvent(hotkeysChangedEvent, "APPLICATION", undefined, undefined));
 };
 
@@ -102,7 +102,7 @@ export const startWsServer = () => {
 
   // Every context listens; only the one holding aegpSocket actually delivers
   // (sendToAegp is a no-op on the others).
-  csi.addEventListener(hotkeysChangedEvent, () => sendHotkeyTable(), undefined);
+  csi.addEventListener(hotkeysChangedEvent, () => pingHotkeysChanged(), undefined);
 
   // All three panels (main/floating/background) load this same bundle, so
   // every context but the first hits EADDRINUSE. That's expected - but keep
@@ -131,7 +131,10 @@ export const startWsServer = () => {
         }
         if (msg?.type === "hello") {
           sendToAegp({ type: "ack" });
-          sendHotkeyTable();
+          // Mostly redundant now that AEGP seeds from the file at launch, but
+          // it covers the file having been created/changed while AEGP had no
+          // server to hear a ping from (e.g. very first run).
+          pingHotkeysChanged();
         }
         listeners.forEach((fn) => fn(msg));
       });
