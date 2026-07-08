@@ -1,7 +1,7 @@
 // WebSocket server CEP hosts for the AEGP plugin to connect to.
 // AEGP is the only client; CEP is the server because the panel's lifetime
 // is what's stable here (the .aex can reconnect on AE restarts/reloads).
-import CSInterface from "./cep/csinterface";
+import CSInterface, { CSEvent } from "./cep/csinterface";
 import { fs } from "./cep/node";
 
 const WS = (
@@ -54,7 +54,7 @@ export const saveHotkeyTable = (bindings: HotkeyBinding[]) => {
 const encodeHotkeyPayload = (bindings: HotkeyBinding[]) =>
   bindings.map((b) => `${b.id},${b.vkey},${b.mods},${b.fn}`).join(";");
 
-// "Polling" = the live-preview evalES tick AEGP sends on every slider-drag
+// "Polling" = the live-preview applyEase tick AEGP sends on every slider-drag
 // frame (not just on commit) - some users would rather only see the result
 // on release. Stored separately from the hotkey table since it's a CEP-only
 // setting AEGP never needs to read.
@@ -82,41 +82,67 @@ export const sendHotkeyTable = () => {
   sendToAegp({ type: "hotkeys", payload: encodeHotkeyPayload(loadHotkeyTable()) });
 };
 
+// Cross-context "the hotkey file changed" broadcast. The ws server lives in
+// whichever panel context won the port (normally `background`), which is
+// usually NOT the context where the user edits hotkeys (`main`) - a plain
+// sendHotkeyTable() from main would hit a null aegpSocket and silently go
+// nowhere. So the editing panel calls this: push locally (covers the case
+// where it does own the socket) and dispatch a CSEvent so the owning context
+// re-reads the file and pushes too. Double delivery is harmless - AEGP
+// replaces its whole registration on every receipt.
+const hotkeysChangedEvent = "barbar.hotkeysChanged";
+
+export const notifyHotkeysChanged = () => {
+  sendHotkeyTable();
+  csi.dispatchEvent(new CSEvent(hotkeysChangedEvent, "APPLICATION", undefined, undefined));
+};
+
 export const startWsServer = () => {
   if (!window.cep) return;
-  const server = new WS.Server({ port: PORT });
 
-  // ponytail: both the main and floating panels load this same bundle, so
-  // whichever loads second hits EADDRINUSE - that's expected, not an error.
-  server.on("error", (err: any) => {
-    if (err?.code !== "EADDRINUSE") throw err;
-  });
+  // Every context listens; only the one holding aegpSocket actually delivers
+  // (sendToAegp is a no-op on the others).
+  csi.addEventListener(hotkeysChangedEvent, () => sendHotkeyTable(), undefined);
 
-  server.on("connection", (socket) => {
-    aegpSocket = socket;
-    console.log("[ws] AEGP connected");
+  // All three panels (main/floating/background) load this same bundle, so
+  // every context but the first hits EADDRINUSE. That's expected - but keep
+  // retrying instead of giving up: if the owning context dies (e.g. its panel
+  // is closed), a surviving context adopts the port and AEGP's auto-reconnect
+  // finds it, instead of the bridge staying dead until AE restarts.
+  const listen = () => {
+    const server = new WS.Server({ port: PORT });
 
-    socket.on("message", (data) => {
-      let msg: any;
-      try {
-        msg = JSON.parse(data.toString());
-      } catch {
-        return;
-      }
-      if (msg?.type === "hello") {
-        sendToAegp({ type: "ack" });
-        sendHotkeyTable();
-      }
-      listeners.forEach((fn) => fn(msg));
+    server.on("error", (err: any) => {
+      if (err?.code !== "EADDRINUSE") throw err;
+      server.close();
+      setTimeout(listen, 3000);
     });
 
-    socket.on("close", () => {
-      if (aegpSocket === socket) aegpSocket = null;
-      console.log("[ws] AEGP disconnected");
-    });
-  });
+    server.on("connection", (socket) => {
+      aegpSocket = socket;
+      console.log("[ws] AEGP connected");
 
-  return server;
+      socket.on("message", (data) => {
+        let msg: any;
+        try {
+          msg = JSON.parse(data.toString());
+        } catch {
+          return;
+        }
+        if (msg?.type === "hello") {
+          sendToAegp({ type: "ack" });
+          sendHotkeyTable();
+        }
+        listeners.forEach((fn) => fn(msg));
+      });
+
+      socket.on("close", () => {
+        if (aegpSocket === socket) aegpSocket = null;
+        console.log("[ws] AEGP disconnected");
+      });
+    });
+  };
+  listen();
 };
 
 export const sendToAegp = (msg: any) => {

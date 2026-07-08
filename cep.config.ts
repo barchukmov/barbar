@@ -46,11 +46,22 @@ const config: CEP_Config = {
       // No UI - just keeps the ws server (AEGP<->CEP) alive from AE launch,
       // independent of whether main/floating are open. floating.svelte closes
       // itself on blur, so it can't be relied on for this.
+      //
+      // CEP never auto-starts Custom-type extensions on its own - without
+      // startOnEvents this panel simply never loads, and the AEGP gets no
+      // hotkey table until the user happens to open the main panel. AE fires
+      // applicationActivate at launch/first focus (both spellings kept for
+      // older CEP versions), which is exactly when hotkeys start mattering -
+      // they only fire while AE is foreground anyway.
       mainPath: "./main/index.html",
       name: "background",
       panelDisplayName: "",
-      autoVisible: true,
+      autoVisible: false,
       type: "Custom",
+      startOnEvents: [
+        "applicationActivate",
+        "com.adobe.csxs.events.ApplicationActivate",
+      ],
       width: 1,
       height: 1,
     },
