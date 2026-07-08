@@ -37,6 +37,9 @@ Copy-Item -Force $ixwsLib "Vendor\IXWebSocket\lib\$Configuration\ixwebsocket.lib
 Write-Host "== Ship popup font + icons next to the .aex =="
 New-Item -ItemType Directory -Force "$OutDir\Fonts" | Out-Null
 Copy-Item -Force 'Resources\Fonts\Mannin-Regular.otf' "$OutDir\Fonts\"
+# The Ubuntu Font Licence requires its text to accompany the font wherever
+# the font is distributed.
+Copy-Item -Force 'Resources\Fonts\LICENCE_UFL.txt' "$OutDir\Fonts\"
 New-Item -ItemType Directory -Force "$OutDir\Icons" | Out-Null
 Copy-Item -Force 'Resources\Icons\*.svg' "$OutDir\Icons\"
 

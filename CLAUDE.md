@@ -23,8 +23,9 @@ A CEP panel (Svelte/TS, via bolt-cep) + an AEGP plugin (C++, `AegpDemo.aex`) for
 - `pnpm build` = `tsc` + `vite build` (CEP bundle; `ws` gets copied into `dist/cep/node_modules` via `installModules` in [cep.config.ts](cep.config.ts), since it's a real npm dependency the CEP node runtime needs at runtime, not something Vite can bundle for a browser target) -> `cd AEGP && build.ps1`.
 - [build.ps1](AEGP/build.ps1) does, in order:
   1. CMake-vendors raylib and IXWebSocket via `FetchContent` (see [HotkeyOverlay/CMakeLists.txt](AEGP/HotkeyOverlay/CMakeLists.txt)).
-  2. Copies headers/libs into `AEGP/Vendor/raylib/` and `AEGP/Vendor/IXWebSocket/` (both are build *output*, regenerated every build - despite being git-tracked from the initial commit, don't hand-edit anything under `Vendor/`).
+  2. Copies headers/libs into `AEGP/Vendor/raylib/` and `AEGP/Vendor/IXWebSocket/` (both are build *output*, gitignored and regenerated every build - don't hand-edit them; `AEGP/Vendor/nanosvg/` is the exception: hand-vendored source, tracked).
   3. MSBuild builds `AegpDemo.vcxproj` straight into AE's plugin folder (`C:\Program Files\Adobe\Adobe After Effects 2026\Support Files\Plug-ins\AEGP\`).
+- **Adobe SDK is not in the repo** (its EULA forbids redistribution): `AEGP/Headers/`, `AEGP/Util/`, and three files in `AEGP/Resources/` (`AE_General.r`, `Mach-O_prefix.h`, `PiPLtool.exe`) are gitignored and must be copied in from Adobe's free AE SDK download - see README "Adobe SDK". They exist in the local working tree, so local builds just work.
 - `pnpm run build:aegp` runs just the AEGP step.
 - `pnpm run reload` ([reload-ae.ps1](reload-ae.ps1)): kills `AfterFX.exe` -> `pnpm build` -> relaunches AE with the last-opened project. The "last opened project" lookup is a best-effort single-line regex match against AE's `Prefs.txt` MRU entry - it only works when that path is plain ASCII on one line. AE's prefs format wraps long/non-ASCII paths across multiple lines using an alternating literal-text / hex-encoded-UTF16BE quoted-segment encoding, which is not decoded here (attempted once, decoded garbage) - in that case AE just launches with no file.
 

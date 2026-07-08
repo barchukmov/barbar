@@ -2,6 +2,9 @@
   "name": "barbar",
   "private": true,
   "version": "0.0.1",
+  "description": "Keyframe easing for After Effects at the cursor: a global hotkey opens a slider popup that eases the selected keyframes live",
+  "author": "Bar Borer",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",
