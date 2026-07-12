@@ -21,6 +21,7 @@ namespace {
 	// change at runtime.
 	std::string g_fontPath;
 	std::string g_monoFontPath;
+	std::string g_jsxBundlePath;
 	std::unordered_map<std::string, std::string> g_iconPaths;
 }
 
@@ -43,6 +44,14 @@ const char* GetMonoFontPath()
 		g_monoFontPath = std::string(winDir) + "\\Fonts\\consola.ttf";
 	}
 	return g_monoFontPath.c_str();
+}
+
+const char* GetJsxBundlePath()
+{
+	if (g_jsxBundlePath.empty()) {
+		g_jsxBundlePath = ModuleDir() + "\\barbar-jsx.js";
+	}
+	return g_jsxBundlePath.c_str();
 }
 
 const char* GetIconPath(const char* filename)

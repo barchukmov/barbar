@@ -2,9 +2,8 @@ export type EaseMode = "in" | "out" | "both";
 
 // ---- selection helpers ------------------------------------------------------
 
-// Selected properties that actually carry selected keyframes, snapshotted
-// into a plain array first: setInterpolationTypeAtKey can deselect keys as a
-// side effect, which would mutate selectedProperties/selectedKeys mid-walk.
+// Snapshot into a plain array first: setInterpolationTypeAtKey can deselect
+// keys as a side effect, mutating selectedProperties/selectedKeys mid-walk.
 const selectedKeyframeProperties = (): any[] => {
   const out: any[] = [];
   const comp = app.project.activeItem;
@@ -33,32 +32,67 @@ const forEachSelectedKey = (fn: (prop: any, key: number) => void) => {
   }
 };
 
-// ---- easing -----------------------------------------------------------------
+// ---- tangent mode -----------------------------------------------------------
 
-// One slider drag = one session. The AEGP popup calls applyEase on every
-// slider tick (not just on commit), so anything that must be read from the
-// keyframe's PRE-drag state - the untouched side of an in/out-only ease, and
-// everything cancelEase restores - is snapshotted the first time a key is
-// touched; later ticks would otherwise read back the previous tick's own
-// output. Module state persists across evalTS calls (same ExtendScript
-// engine), so no $-global is needed. A commit clears the session; the next
-// drag snapshots fresh.
+// AE exposes keyframe smoothing as two overlapping booleans
+// (keyTemporalAutoBezier / keyTemporalContinuous); this collapses them into
+// one state. Auto bezier is always both-sided - there is no in-only or
+// out-only auto bezier - and implies continuous. A key that is continuous but
+// not auto has user-set matched tangents. Neither means broken tangents.
+type TangentMode = "auto" | "continuous" | "broken";
+
+
+// Only valid on a bezier/bezier key - AE throws on Linear/Hold sides.
+// "auto" is set with the auto flag alone (it implies continuous, and an
+// explicit setTemporalContinuousAtKey afterwards demotes the key back to
+// plain continuous); the other modes clear auto, then set continuous.
+const setTangentMode = (prop: any, keyIndex: number, mode: TangentMode): void => {
+  prop.setTemporalAutoBezierAtKey(keyIndex, mode === "auto");
+  if (mode !== "auto") prop.setTemporalContinuousAtKey(keyIndex, mode === "continuous");
+};
+
+// ---- drag session -----------------------------------------------------------
+
+// One slider drag = one session. Preview ticks call applyEase repeatedly, so
+// each key's pre-drag state is snapshotted the first time it's touched and
+// every later tick reads from that snapshot, never from a previous tick's
+// output. cancelEase restores it; a commit clears it. Module state survives
+// across calls because the loading engine keeps the bundle alive.
+type EaseData = { speed: number; influence: number };
+
 type KeySnapshot = {
+  id: string;
   prop: any;
   keyIndex: number;
   inType: KeyframeInterpolationType;
   outType: KeyframeInterpolationType;
-  inEase: KeyframeEase[];
-  outEase: KeyframeEase[];
-  autoBezier: boolean;
-  continuous: boolean;
+  inEase: EaseData[];
+  outEase: EaseData[];
+  tangentMode: TangentMode;
 };
 
 let easeSnapshots: { [id: string]: KeySnapshot } = {};
 
-// PropertyBase has no .layer shortcut - propertyGroup(propertyDepth) is the
-// documented way to walk up to the owning layer. keyTime (not key index)
-// disambiguates keys within a property.
+// Tangents are stored as plain numbers: KeyframeEase host objects go stale
+// across script calls and throw on restore.
+const plainEases = (list: KeyframeEase[]): EaseData[] => {
+  const out: EaseData[] = [];
+  for (let i = 0; i < list.length; i++) {
+    out.push({ speed: list[i].speed, influence: list[i].influence });
+  }
+  return out;
+};
+
+const hostEases = (list: EaseData[]): KeyframeEase[] => {
+  const out: KeyframeEase[] = [];
+  for (let i = 0; i < list.length; i++) {
+    out.push(new KeyframeEase(list[i].speed, list[i].influence));
+  }
+  return out;
+};
+
+// propertyGroup(propertyDepth) walks up to the owning layer (PropertyBase has
+// no .layer shortcut); keyTime disambiguates keys within a property.
 const keyId = (prop: any, keyIndex: number): string => {
   const layer = prop.propertyGroup(prop.propertyDepth);
   return layer.index + "|" + prop.name + "|" + prop.propertyIndex + "|" + prop.keyTime(keyIndex);
@@ -68,34 +102,43 @@ const snapshotKeyOnce = (prop: any, keyIndex: number): KeySnapshot => {
   const id = keyId(prop, keyIndex);
   let snap = easeSnapshots[id];
   if (!snap) {
+    const auto = prop.keyTemporalAutoBezier(keyIndex);
+    const cont = prop.keyTemporalContinuous(keyIndex);
+    // No nested ternary here (or anywhere jsx-bound): ExtendScript parses
+    // the conditional operator left-associatively, so
+    // `auto ? "auto" : cont ? "continuous" : "broken"` runs as
+    // `(auto ? "auto" : cont) ? ...` and classifies every auto key as
+    // "continuous" ("auto" is a truthy string).
+    let tangentMode: TangentMode = "broken";
+    if (auto) tangentMode = "auto";
+    else if (cont) tangentMode = "continuous";
     snap = {
+      id: id,
       prop: prop,
       keyIndex: keyIndex,
       inType: prop.keyInInterpolationType(keyIndex),
       outType: prop.keyOutInterpolationType(keyIndex),
-      inEase: prop.keyInTemporalEase(keyIndex),
-      outEase: prop.keyOutTemporalEase(keyIndex),
-      autoBezier: prop.keyTemporalAutoBezier(keyIndex),
-      continuous: prop.keyTemporalContinuous(keyIndex),
+      inEase: plainEases(prop.keyInTemporalEase(keyIndex)),
+      outEase: plainEases(prop.keyOutTemporalEase(keyIndex)),
+      tangentMode: tangentMode,
     };
     easeSnapshots[id] = snap;
   }
   return snap;
 };
 
-// KeyframeEase arrays passed to setTemporalEaseAtKey need one entry per
-// temporal dimension: always 1 for spatial properties, otherwise however
-// many keyOutTemporalEase reports.
+// ---- easing -----------------------------------------------------------------
+
+// setTemporalEaseAtKey wants one KeyframeEase per temporal dimension:
+// always 1 for spatial properties, otherwise whatever the key reports.
 const temporalEaseSize = (prop: any, keyIndex: number): number => {
   if (prop.isSpatial) return 1;
   const size = prop.keyOutTemporalEase(keyIndex).length;
   return size < 1 ? 1 : size;
 };
 
-// Keyframe value as a numeric vector: scalars become [v], array values
-// (Position/Scale/Anchor Point/colors) are copied through. Anything without
-// per-dimension numbers (markers, text, shapes) returns null and never
-// counts as interior.
+// Keyframe value as a numeric vector; null for values without per-dimension
+// numbers (markers, text, shapes), which never count as interior.
 const keyValueVector = (prop: any, keyIndex: number): number[] | null => {
   const v = prop.keyValue(keyIndex);
   if (typeof v === "number") return [v];
@@ -110,21 +153,12 @@ const keyValueVector = (prop: any, keyIndex: number): number[] | null => {
   return null;
 };
 
-// A key is "interior to a monotonic run" when the value passes straight
-// through it rather than turning around at it. Interior keys get temporal
-// auto-bezier - AE derives their tangents from the neighbors, which reads as
-// the smooth case - instead of the slider's ease, which belongs on the run's
-// ends. Two tests, by property kind:
-//
-// - Positional (isSpatial - layer Position/Anchor Point and effect 2D/3D
-//   point controls, anything that can have a motion path): the key is
-//   interior when the dot product of (a->b) and (b->c) is positive, i.e. the
-//   incoming and outgoing motion agree within 90 degrees. Turning sharper
-//   than that (or stopping) keeps the ease.
-// - Everything else (scalars, Scale, colors): per-dimension - every
-//   dimension keeps the direction it came in with (a dimension holding
-//   still on both sides is fine), and at least one dimension is moving. Any
-//   dimension reversing (an extremum on some axis) keeps the ease.
+// A key is interior to a monotonic run when the value passes straight through
+// it rather than turning around at it. Interior keys get auto bezier (AE
+// derives their tangents from the neighbors); the slider's ease belongs on
+// the run's ends. Spatial props: incoming and outgoing motion agree within
+// 90 degrees (dot product > 0). Everything else: every dimension keeps its
+// direction and at least one dimension is moving.
 const interiorRunFlags = (prop: any, keyIndices: number[]): boolean[] => {
   const n = keyIndices.length;
   const flags: boolean[] = [];
@@ -135,8 +169,13 @@ const interiorRunFlags = (prop: any, keyIndices: number[]): boolean[] => {
   for (let i = 0; i < n; i++) {
     values.push(keyValueVector(prop, keyIndices[i]));
   }
+  // No nested ternary (ExtendScript parses them left-associatively - the
+  // one-liner returns -1 for equal values, making flat dimensions read as
+  // "moving" and inflating interior detection on plateaus).
   const diffSign = (a: number, b: number): number => {
-    return a === b ? 0 : b > a ? 1 : -1;
+    if (a === b) return 0;
+    if (b > a) return 1;
+    return -1;
   };
   const spatial = !!prop.isSpatial;
 
@@ -174,6 +213,17 @@ const interiorRunFlags = (prop: any, keyIndices: number[]): boolean[] => {
 
 export const applyEase = (value: number, mode: EaseMode, isPreview: boolean): void => {
   const props = selectedKeyframeProperties();
+  // Fallback snapshot pass for callers that skipped beginEaseSession (the
+  // panel's Ease button, or the popup when the sync session call timed out):
+  // snapshot every key before the tick's first write, so no first-touch
+  // snapshot trails a mutation. In the popup flow the session call already
+  // did this and these are all cache hits.
+  for (let p = 0; p < props.length; p++) {
+    const prop = props[p];
+    if (!prop.canVaryOverTime || prop.numKeys < 1) continue;
+    const keys = copySelectedKeys(prop);
+    for (let k = 0; k < keys.length; k++) snapshotKeyOnce(prop, keys[k]);
+  }
   app.beginUndoGroup("Ease Keyframes");
   try {
     for (let p = 0; p < props.length; p++) {
@@ -186,9 +236,12 @@ export const applyEase = (value: number, mode: EaseMode, isPreview: boolean): vo
         const keyIndex = keys[k];
         const snap = snapshotKeyOnce(prop, keyIndex);
 
-        // KeyframeEase influence is clamped to 0.1-100, so a slider value of
-        // 0 means "linear", not "zero-influence bezier".
+        // Influence clamps to 0.1-100, so value 0 means "linear", not
+        // "zero-influence bezier". Restore the snapshot tangents first: an
+        // earlier tick may have left slider tangents on a side this tick no
+        // longer touches.
         if (value === 0) {
+          prop.setTemporalEaseAtKey(keyIndex, hostEases(snap.inEase), hostEases(snap.outEase));
           prop.setInterpolationTypeAtKey(
             keyIndex,
             mode !== "out" ? KeyframeInterpolationType.LINEAR : snap.inType,
@@ -203,20 +256,28 @@ export const applyEase = (value: number, mode: EaseMode, isPreview: boolean): vo
             KeyframeInterpolationType.BEZIER,
             KeyframeInterpolationType.BEZIER
           );
-          prop.setTemporalAutoBezierAtKey(keyIndex, true);
+          setTangentMode(prop, keyIndex, "auto");
           continue;
         }
 
+        // The mode's untouched side keeps its pre-drag ease and type.
         const size = temporalEaseSize(prop, keyIndex);
         const inEase: KeyframeEase[] = [];
         const outEase: KeyframeEase[] = [];
         for (let d = 0; d < size; d++) {
-          inEase.push(mode !== "out" ? new KeyframeEase(0, value) : snap.inEase[d]);
-          outEase.push(mode !== "in" ? new KeyframeEase(0, value) : snap.outEase[d]);
+          inEase.push(
+            mode !== "out"
+              ? new KeyframeEase(0, value)
+              : new KeyframeEase(snap.inEase[d].speed, snap.inEase[d].influence)
+          );
+          outEase.push(
+            mode !== "in"
+              ? new KeyframeEase(0, value)
+              : new KeyframeEase(snap.outEase[d].speed, snap.outEase[d].influence)
+          );
         }
         prop.setTemporalEaseAtKey(keyIndex, inEase, outEase);
-        // setTemporalEaseAtKey forces BOTH sides to bezier as a side effect,
-        // even when only one side's ease actually changed - reassert the
+        // setTemporalEaseAtKey forces both sides to bezier - reassert the
         // per-side types last so an untouched side (e.g. Linear) sticks.
         prop.setInterpolationTypeAtKey(
           keyIndex,
@@ -228,38 +289,85 @@ export const applyEase = (value: number, mode: EaseMode, isPreview: boolean): vo
   } finally {
     app.endUndoGroup();
   }
-  // A commit is the new authoritative state - drop the snapshots so the next
-  // drag starts fresh instead of "restoring" stale data.
+  // A commit is the new authoritative state; the next drag snapshots fresh.
   if (!isPreview) easeSnapshots = {};
 };
 
-// Esc dismisses the popup without a commit - but the preview ticks already
-// wrote real keyframe edits during the drag, so cancelling means restoring
-// every touched key from its pre-drag snapshot, not just forgetting them.
+// A skipped restore is invisible to the user (the popup is long gone), so
+// leave a trace. Logging must never break the restore itself.
+const logCancel = (line: string): void => {
+  try {
+    const f = new File(Folder.temp.fsName + "/barbar-cancel.log");
+    if (f.open("a")) {
+      f.writeln(new Date().toString() + " " + line);
+      f.close();
+    }
+  } catch (ignored) {}
+};
+
+const logCancelSkip = (id: string, e: any): void => {
+  logCancel("skipped " + id + ": " + (e && e.message ? e.message : String(e)));
+};
+
+// Preview ticks write real keyframe edits during the drag, so cancelling
+// means restoring every touched key from its pre-drag snapshot.
 export const cancelEase = (): void => {
   app.beginUndoGroup("Cancel Ease");
   try {
     for (const id in easeSnapshots) {
       const s = easeSnapshots[id];
-      s.prop.setTemporalEaseAtKey(s.keyIndex, s.inEase, s.outEase);
-      // setTemporalEaseAtKey forces both sides to bezier - reassert the
-      // original types after it. Auto-bezier next (setting it also flips
-      // continuous), then continuous last so both flags land as snapshotted.
-      s.prop.setInterpolationTypeAtKey(s.keyIndex, s.inType, s.outType);
-      s.prop.setTemporalAutoBezierAtKey(s.keyIndex, s.autoBezier);
-      s.prop.setTemporalContinuousAtKey(s.keyIndex, s.continuous);
+      // Per-key try: a snapshot can outlive its keyframe (layer deleted,
+      // keys moved, comp switched); a dead entry must not abort the rest.
+      try {
+        // Auto bezier keys are restored without touching the tangents: AE
+        // derives them itself, and an explicit setTemporalEaseAtKey demotes
+        // the key to continuous. Auto is always bezier/bezier, so setting
+        // the types and the flag is the whole restore.
+        if (s.tangentMode === "auto") {
+          s.prop.setInterpolationTypeAtKey(
+            s.keyIndex,
+            KeyframeInterpolationType.BEZIER,
+            KeyframeInterpolationType.BEZIER
+          );
+          setTangentMode(s.prop, s.keyIndex, "auto");
+          continue;
+        }
+        // Ordered so no call's side effects corrupt the restore:
+        // (1) force both sides bezier while the tangents are disposable -
+        //     type changes can reset tangents;
+        // (2) write the snapshot tangents (needs bezier sides anyway);
+        // (3) reassert the original per-side types - a tangent reset here
+        //     only lands on Linear/Hold sides, which have none;
+        // (4) tangent mode last, and only on bezier/bezier keys (it doesn't
+        //     exist elsewhere and the setters throw).
+        s.prop.setInterpolationTypeAtKey(
+          s.keyIndex,
+          KeyframeInterpolationType.BEZIER,
+          KeyframeInterpolationType.BEZIER
+        );
+        s.prop.setTemporalEaseAtKey(s.keyIndex, hostEases(s.inEase), hostEases(s.outEase));
+        s.prop.setInterpolationTypeAtKey(s.keyIndex, s.inType, s.outType);
+        if (
+          s.inType === KeyframeInterpolationType.BEZIER &&
+          s.outType === KeyframeInterpolationType.BEZIER
+        ) {
+          setTangentMode(s.prop, s.keyIndex, s.tangentMode);
+        }
+      } catch (e) {
+        logCancelSkip(id, e);
+      }
     }
   } finally {
     app.endUndoGroup();
+    // Clear even when a restore threw - stale snapshots would re-throw on
+    // every later cancel and "restore" dead state onto live keys.
+    easeSnapshots = {};
   }
-  easeSnapshots = {};
 };
 
 // ---- popup extras -----------------------------------------------------------
 
-// Sets only the outgoing handle to Hold, leaving the incoming side as-is -
-// the popup button for this exists so the user doesn't have to set both
-// handles to Hold just to hold the outgoing one.
+// Sets only the outgoing handle to Hold, leaving the incoming side as-is.
 export const setOutgoingHandleHold = (): void => {
   app.beginUndoGroup("Hold Outgoing Handle");
   try {
@@ -268,9 +376,30 @@ export const setOutgoingHandleHold = (): void => {
     });
   } finally {
     app.endUndoGroup();
+    // Hold-Out ends the drag like a commit does (the previewed ease stays):
+    // the session's snapshots are spent, and keeping them would make the
+    // *next* drag's cancel restore two-drags-ago state.
+    easeSnapshots = {};
   }
 };
 
 export const isAnyKeyframeSelected = (): boolean => {
   return selectedKeyframeProperties().length > 0;
+};
+
+// The popup calls this synchronously at hotkey time, before its window
+// exists: it answers the popup-vs-toast question and snapshots every
+// selected key's pre-drag state at a moment when nothing else is queued or
+// mid-write. It is also the session boundary - a leftover snapshot from a
+// session that never reached its commit/cancel must not leak into this one.
+export const beginEaseSession = (): boolean => {
+  easeSnapshots = {};
+  const props = selectedKeyframeProperties();
+  for (let p = 0; p < props.length; p++) {
+    const prop = props[p];
+    if (!prop.canVaryOverTime || prop.numKeys < 1) continue;
+    const keys = copySelectedKeys(prop);
+    for (let k = 0; k < keys.length; k++) snapshotKeyOnce(prop, keys[k]);
+  }
+  return props.length > 0;
 };

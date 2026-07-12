@@ -25,15 +25,6 @@ New-Item -ItemType Directory -Force "Vendor\raylib\lib\$Configuration" | Out-Nul
 Copy-Item -Force $raylibSrc 'Vendor\raylib\include\'
 Copy-Item -Force $raylibLib "Vendor\raylib\lib\$Configuration\raylib.lib"
 
-Write-Host "== Vendor IXWebSocket (CEP<->AEGP transport) =="
-$ixwsInclude = "$overlayBuild\_deps\ixwebsocket-src\ixwebsocket"
-$ixwsLib = "$overlayBuild\_deps\ixwebsocket-build\$Configuration\ixwebsocket.lib"
-
-New-Item -ItemType Directory -Force 'Vendor\IXWebSocket\include\ixwebsocket' | Out-Null
-New-Item -ItemType Directory -Force "Vendor\IXWebSocket\lib\$Configuration" | Out-Null
-Copy-Item -Force "$ixwsInclude\*.h" 'Vendor\IXWebSocket\include\ixwebsocket\'
-Copy-Item -Force $ixwsLib "Vendor\IXWebSocket\lib\$Configuration\ixwebsocket.lib"
-
 Write-Host "== Ship popup font + icons next to the .aex =="
 New-Item -ItemType Directory -Force "$OutDir\Fonts" | Out-Null
 Copy-Item -Force 'Resources\Fonts\Mannin-Regular.otf' "$OutDir\Fonts\"
@@ -42,6 +33,19 @@ Copy-Item -Force 'Resources\Fonts\Mannin-Regular.otf' "$OutDir\Fonts\"
 Copy-Item -Force 'Resources\Fonts\LICENCE_UFL.txt' "$OutDir\Fonts\"
 New-Item -ItemType Directory -Force "$OutDir\Icons" | Out-Null
 Copy-Item -Force 'Resources\Icons\*.svg' "$OutDir\Icons\"
+
+Write-Host "== Ship compiled jsx bundle next to the .aex =="
+# The ScriptRunner $.evalFile's this into AE's ExtendScript engine on the
+# first jsx call (see GetJsxBundlePath). It's produced by the CEP build
+# (`pnpm build` runs tsc+vite before this script), so a bare build:aegp on a
+# clean tree may not have it yet - warn instead of failing; script calls
+# no-op with an "ERR:" debug log until it ships.
+$jsxBundle = '..\dist\cep\jsx\index.js'
+if (Test-Path $jsxBundle) {
+  Copy-Item -Force $jsxBundle "$OutDir\barbar-jsx.js"
+} else {
+  Write-Warning "dist\cep\jsx\index.js not found - run the full 'pnpm build' so barbar-jsx.js ships next to the .aex"
+}
 
 Write-Host "== Build AegpDemo.vcxproj =="
 # a single trailing backslash escapes the closing quote in MSBuild's argv parsing

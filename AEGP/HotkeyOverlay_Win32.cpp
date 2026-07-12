@@ -1,8 +1,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "HotkeyOverlay.h"
+#include "PopupActions.h"
 #include "win32_popup_bridge.h"
-#include "WsClient.h"
 #include <unordered_map>
 #include <vector>
 #include <sstream>
@@ -10,14 +10,12 @@
 #include <cstdlib>
 
 namespace {
-	// Custom thread message carrying a freshly-pushed hotkey table. Posted
-	// from whatever thread receives the WS message (IXWebSocket's own), but
-	// must be applied on this thread - RegisterHotKey/UnregisterHotKey are
-	// tied to the thread whose message queue receives WM_HOTKEY.
-	const UINT kHotkeysUpdatedMsg = WM_APP + 1;
 	// Polls GetForegroundWindow so the hotkeys can be unregistered while AE
-	// isn't focused - see kForegroundPollTimerId below.
-	const UINT kForegroundPollTimerId = 1;
+	// isn't focused. For a NULL-hwnd (thread) timer, SetTimer ignores the ID
+	// you request and assigns its own - WM_TIMER's wParam carries the
+	// *returned* ID, so it must be captured here, not assumed. Only touched
+	// on the overlay thread.
+	UINT_PTR g_foregroundPollTimerId = 0;
 	const UINT kForegroundPollMs = 250;
 
 	HANDLE g_thread = NULL;
@@ -30,7 +28,8 @@ namespace {
 	// Only ever touched on the overlay thread (ThreadProc), so no lock needed.
 	std::unordered_map<int, std::string> g_idToFn;
 	// Last payload applied, kept around so the foreground-poll timer can
-	// re-register the same table once AE regains focus.
+	// re-register the same table once AE regains focus, and so the file
+	// watcher can tell a real table edit from unrelated %APPDATA% churn.
 	std::string g_lastPayload;
 	bool g_registered = false;
 
@@ -65,9 +64,21 @@ namespace {
 		g_registered = false;
 	}
 
-	// Top-level numeric field from a flat JSON object chunk - same hand-rolled
-	// philosophy as WsJsonGetString (small, flat format fully owned by both
-	// ends). Returns -1 when the key is absent.
+	// Top-level string field from a flat JSON object chunk - hand-rolled
+	// because the format is small, flat, and fully owned by both ends (CEP
+	// JSON.stringify writes it, only this file reads it).
+	std::string JsonString(const std::string& obj, const char* key)
+	{
+		std::string needle = std::string("\"") + key + "\":\"";
+		size_t start = obj.find(needle);
+		if (start == std::string::npos) return "";
+		start += needle.size();
+		size_t end = obj.find('"', start);
+		if (end == std::string::npos) return "";
+		return obj.substr(start, end - start);
+	}
+
+	// Top-level numeric field, same philosophy. Returns -1 when absent.
 	int JsonInt(const std::string& obj, const char* key)
 	{
 		std::string needle = std::string("\"") + key + "\":";
@@ -77,15 +88,14 @@ namespace {
 	}
 
 	// The hotkey table's single source of truth is %APPDATA%\barbar-hotkeys.json
-	// - written only by CEP (ws-server.ts, JSON.stringify of
+	// - written only by CEP (prefs.ts, JSON.stringify of
 	// [{id,vkey,mods,fn},...]), read only here. Reading it directly is what
 	// makes hotkeys live from AE launch: the AEGP loads long before any CEP
-	// panel boots, so waiting for the table to arrive over the socket left the
-	// hotkeys dead until a panel came up. Returns false if the file can't be
-	// read (first run before CEP ever saved one) - callers then just keep the
-	// current registration. An empty-but-readable table ("[]") is a valid
-	// "no hotkeys" result. Output format: "id,vkey,mods,fn;..." with mods as
-	// the shared bitmask (bit0=ctrl, bit1=shift, bit2=alt).
+	// panel boots. Returns false if the file can't be read (first run before
+	// CEP ever saved one) - callers then just keep the current registration.
+	// An empty-but-readable table ("[]") is a valid "no hotkeys" result.
+	// Output format: "id,vkey,mods,fn;..." with mods as the shared bitmask
+	// (bit0=ctrl, bit1=shift, bit2=alt).
 	bool LoadHotkeyPayloadFromFile(std::string& payloadOut)
 	{
 		char appData[MAX_PATH] = { 0 };
@@ -106,7 +116,7 @@ namespace {
 			int id = JsonInt(obj, "id");
 			int vkey = JsonInt(obj, "vkey");
 			int mods = JsonInt(obj, "mods"); // 0 (no modifier) is legitimate
-			std::string fn = WsJsonGetString(obj, "fn");
+			std::string fn = JsonString(obj, "fn");
 			if (id < 0 || vkey <= 0 || mods < 0 || fn.empty()) continue;
 			payloadOut += std::to_string(id) + "," + std::to_string(vkey) + ","
 				+ std::to_string(mods) + "," + fn + ";";
@@ -153,16 +163,19 @@ namespace {
 		}
 	}
 
-	// Function names AEGP can run itself vs. forwarding to CEP over WS.
-	// Just "Easing" today - see RunNativeFunction's caller for the fallback.
-	bool RunNativeFunction(const std::string& fn, int x, int y, const RECT& monitor)
+	// Dispatch for a fired hotkey. "Easing" is the popup, handled right here
+	// on the overlay thread; any other fn is assumed to name a $["barbar"]
+	// jsx function and is run through the ScriptRunner - that's the whole
+	// extension story for new tools: export a function from src/jsx, bind it
+	// in the hotkey table, no C++ change.
+	void RunHotkeyFunction(const std::string& fn, int x, int y, const RECT& monitor)
 	{
 		if (fn == "Easing") {
-			std::string reply = WsRequest(R"({"type":"keyframeSelectionQuery"})", "keyframeSelectionReply", 300);
-			// ponytail: an empty/timed-out reply (CEP slow to answer, or not
-			// connected yet) is treated as "selected" - this is a UX nicety,
-			// not a guarantee, so erring toward showing the popup is right.
-			bool selected = reply.empty() || WsJsonGetString(reply, "selected") != "false";
+			// Blocking ask (1s cap): AE's main thread answers via the
+			// ScriptRunner's idle hook. A timeout (main thread busy) is
+			// treated as "selected" - this is a UX nicety, not a guarantee,
+			// so erring toward showing the popup is right.
+			bool selected = IsAnyKeyframeSelected();
 			int monW = monitor.right - monitor.left;
 			int monH = monitor.bottom - monitor.top;
 			if (selected) {
@@ -170,66 +183,100 @@ namespace {
 			} else {
 				RunNoSelectionToast(x, y, monitor.left, monitor.top, monW, monH);
 			}
-			return true;
+			return;
 		}
-		return false;
+		RunJsxFunctionByName(fn);
 	}
 
 	DWORD WINAPI ThreadProc(LPVOID queueReadyEvent)
 	{
 		// A thread has no message queue until its first User32 call - and
 		// PostThreadMessage to a queue-less thread just fails. Force the queue
-		// into existence, then release StartHotkeyOverlay, so an
-		// UpdateHotkeyTable racing in right after startup can't be dropped.
+		// into existence, then release StartHotkeyOverlay, so a WM_QUIT racing
+		// in right after startup can't be dropped.
 		MSG peek;
 		PeekMessageW(&peek, NULL, WM_USER, WM_USER, PM_NOREMOVE);
 		SetEvent((HANDLE)queueReadyEvent);
 
-		SetTimer(NULL, kForegroundPollTimerId, kForegroundPollMs, NULL);
+		g_foregroundPollTimerId = SetTimer(NULL, 0, kForegroundPollMs, NULL);
 
 		// Hotkeys are live from AE launch: seed the table straight from the
-		// prefs file instead of waiting for a CEP panel to boot, connect, and
-		// ping. If AE isn't foreground yet, ForegroundPollTick registers it
-		// the moment it is.
+		// prefs file instead of waiting for a CEP panel to boot. If AE isn't
+		// foreground yet, ForegroundPollTick registers it the moment it is.
 		std::string filePayload;
 		if (LoadHotkeyPayloadFromFile(filePayload)) {
 			g_lastPayload = filePayload;
 			if (IsAeForeground()) ApplyHotkeyTable(g_lastPayload);
 		}
 
-		MSG msg;
-		while (GetMessage(&msg, NULL, 0, 0)) {
-			if (msg.message == kHotkeysUpdatedMsg) {
-				std::string* payload = reinterpret_cast<std::string*>(msg.lParam);
-				g_lastPayload = *payload;
-				delete payload;
-				// Only actually grab the keys if AE is foreground right now -
-				// otherwise wait for ForegroundPollTick to do it once it is.
-				if (IsAeForeground()) ApplyHotkeyTable(g_lastPayload);
-			} else if (msg.message == WM_TIMER && msg.wParam == kForegroundPollTimerId) {
-				ForegroundPollTick();
-			} else if (msg.message == WM_HOTKEY) {
-				auto it = g_idToFn.find((int)msg.wParam);
-				if (it == g_idToFn.end()) continue;
+		// Watch %APPDATA% for the hotkey file changing - CEP just writes the
+		// file on an edit, no change notification crosses anywhere else.
+		// FindFirstChangeNotification can't watch a single file, so this
+		// fires for *any* file in the (busy) %APPDATA% root; the payload
+		// comparison below makes unrelated churn a cheap no-op. Non-recursive
+		// (FALSE), so subdirectory noise doesn't even reach us.
+		HANDLE watch = INVALID_HANDLE_VALUE;
+		{
+			char appData[MAX_PATH] = { 0 };
+			if (GetEnvironmentVariableA("APPDATA", appData, MAX_PATH)) {
+				watch = FindFirstChangeNotificationA(appData, FALSE,
+					FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_SIZE);
+			}
+		}
 
-				POINT pt;
-				GetCursorPos(&pt);
-				// The overlay must cover the monitor the cursor is on, not the
-				// primary - SM_CXSCREEN/SM_CYSCREEN describe only the primary, so
-				// on a secondary display the popup used to open on the wrong
-				// screen with the cursor "outside" the window.
-				RECT monitor = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
-				MONITORINFO mi = { sizeof(MONITORINFO) };
-				if (GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi)) {
-					monitor = mi.rcMonitor;
+		// MsgWaitForMultipleObjects instead of GetMessage so one loop serves
+		// both the message queue (hotkeys, timer, WM_QUIT) and the directory
+		// watch. While a popup is up this thread is inside RunPopupAtCursor's
+		// own loop, so watch hits and messages simply queue until it closes -
+		// same behavior the GetMessage loop had.
+		bool quit = false;
+		while (!quit) {
+			DWORD handleCount = watch != INVALID_HANDLE_VALUE ? 1 : 0;
+			DWORD wake = MsgWaitForMultipleObjects(handleCount, &watch, FALSE, INFINITE, QS_ALLINPUT);
+
+			if (handleCount && wake == WAIT_OBJECT_0) {
+				FindNextChangeNotification(watch); // re-arm first - edits during the reload still fire
+				std::string payload;
+				if (LoadHotkeyPayloadFromFile(payload) && payload != g_lastPayload) {
+					g_lastPayload = payload;
+					// Re-register only while foreground (same rule as
+					// everywhere); otherwise ForegroundPollTick picks the new
+					// table up on the next focus gain.
+					if (IsAeForeground()) ApplyHotkeyTable(g_lastPayload);
 				}
-				if (!RunNativeFunction(it->second, pt.x, pt.y, monitor)) {
-					WsSend(R"({"type":"hotkeyTriggered","fn":")" + it->second + "\"}");
+				continue;
+			}
+
+			MSG msg;
+			while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+				if (msg.message == WM_QUIT) {
+					quit = true;
+					break;
+				}
+				if (msg.message == WM_TIMER && msg.wParam == g_foregroundPollTimerId) {
+					ForegroundPollTick();
+				} else if (msg.message == WM_HOTKEY) {
+					auto it = g_idToFn.find((int)msg.wParam);
+					if (it == g_idToFn.end()) continue;
+
+					POINT pt;
+					GetCursorPos(&pt);
+					// The overlay must cover the monitor the cursor is on, not the
+					// primary - SM_CXSCREEN/SM_CYSCREEN describe only the primary, so
+					// on a secondary display the popup used to open on the wrong
+					// screen with the cursor "outside" the window.
+					RECT monitor = { 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN) };
+					MONITORINFO mi = { sizeof(MONITORINFO) };
+					if (GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi)) {
+						monitor = mi.rcMonitor;
+					}
+					RunHotkeyFunction(it->second, pt.x, pt.y, monitor);
 				}
 			}
 		}
 
-		KillTimer(NULL, kForegroundPollTimerId);
+		if (watch != INVALID_HANDLE_VALUE) FindCloseChangeNotification(watch);
+		KillTimer(NULL, g_foregroundPollTimerId);
 		UnregisterAllHotkeys();
 		return 0;
 	}
@@ -249,9 +296,10 @@ void StopHotkeyOverlay()
 {
 	if (!g_thread) return;
 	// ponytail: if a popup happens to be open right now the thread is inside
-	// RunPopupAtCursor's own loop, not GetMessage, so this WM_QUIT sits queued
-	// until the popup closes; the 2s wait just gives up rather than blocking
-	// AE's shutdown. Fine for a demo - revisit if that's ever user-visible.
+	// RunPopupAtCursor's own loop, not the message wait, so this WM_QUIT sits
+	// queued until the popup closes; the 2s wait just gives up rather than
+	// blocking AE's shutdown. Fine for a demo - revisit if that's ever
+	// user-visible.
 	PostThreadMessage(g_threadId, WM_QUIT, 0, 0);
 	WaitForSingleObject(g_thread, 2000);
 	CloseHandle(g_thread);
@@ -259,17 +307,5 @@ void StopHotkeyOverlay()
 	if (g_queueReady) {
 		CloseHandle(g_queueReady);
 		g_queueReady = NULL;
-	}
-}
-
-void ReloadHotkeyTableFromFile()
-{
-	if (!g_threadId) return;
-	// Read here (any thread - just a file read), apply on the overlay thread.
-	std::string payload;
-	if (!LoadHotkeyPayloadFromFile(payload)) return;
-	std::string* heapPayload = new std::string(payload);
-	if (!PostThreadMessage(g_threadId, kHotkeysUpdatedMsg, 0, (LPARAM)heapPayload)) {
-		delete heapPayload; // post failed - don't leak; CEP re-pings on every (re)connect
 	}
 }

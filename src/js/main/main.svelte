@@ -4,11 +4,10 @@
   import {
     loadHotkeyTable,
     saveHotkeyTable,
-    notifyHotkeysChanged,
     loadPollingEnabled,
     savePollingEnabled,
     type HotkeyBinding,
-  } from "../lib/ws-server";
+  } from "../lib/prefs";
   import { loadAeKeymap, findClash } from "../lib/ae-keymap";
   import "../index.scss";
   import "./main.scss";
@@ -86,8 +85,9 @@
       b.id === listeningId ? { ...b, vkey, mods } : b
     );
     listeningId = null;
+    // The write is the whole notification: the AEGP watches the prefs
+    // directory and re-reads the table when the file changes.
     saveHotkeyTable(bindings);
-    notifyHotkeysChanged();
 
     const clash = findClash(aeKeymap, mods, vkey);
     clashWarning = clash ? `Clashes with After Effects' "${clash}"` : null;

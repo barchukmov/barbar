@@ -2,35 +2,30 @@
 #include <new>
 #ifdef AE_OS_WIN
 #include "HotkeyOverlay.h"
-#include "WsClient.h"
-#include <windows.h>
+#include "ScriptRunner.h"
 #endif
 
 // This .aex has no After Effects-side UI - the panel the user interacts with
-// is the CEP extension. The plugin exists only to host the global-hotkey
-// overlay and the WebSocket client that bridges the popup to CEP. So its
-// entire job is to spin those up when AE loads the plugin and tear them down
-// on shutdown; it registers a death hook and nothing else (no menu command,
-// no panel).
+// is the CEP extension, and it's purely a settings editor. The plugin's
+// entire job is the global-hotkey overlay and running the resulting
+// ExtendScript calls on AE's main thread (ScriptRunner); it spins those up
+// when AE loads the plugin, tears them down on shutdown, and registers a
+// death hook and nothing else (no menu command, no panel).
 class BarbarPlugin {
 public:
   BarbarPlugin(SPBasicSuite *pica_basicP, AEGP_PluginID pluginID)
       : i_sp(pica_basicP), i_pluginID(pluginID) {
     // The death hook is the clean-shutdown signal that lets us join the
-    // hotkey thread and stop the socket before AE unloads the DLL.
+    // hotkey thread before AE unloads the DLL.
     PT_ETX(i_sp.RegisterSuite5()->AEGP_RegisterDeathHook(
         i_pluginID, &BarbarPlugin::S_DeathHook, NULL));
 
 #ifdef AE_OS_WIN
+    // ScriptRunner first: it must save off suite pointers and register its
+    // idle hook on this (the main) thread before the overlay thread exists
+    // and a hotkey can fire a jsx call at it.
+    StartScriptRunner(pica_basicP, pluginID);
     StartHotkeyOverlay();
-    StartWsClient("ws://127.0.0.1:41420", [](const std::string &msg) {
-      OutputDebugStringA(("[ws] " + msg + "\n").c_str());
-      // The ping carries no table - the hotkey file is the source of truth
-      // and the overlay re-reads it (see ReloadHotkeyTableFromFile).
-      if (WsJsonGetString(msg, "type") == "hotkeysChanged") {
-        ReloadHotkeyTableFromFile();
-      }
-    });
 #endif
   }
 
@@ -41,7 +36,7 @@ private:
   void DeathHook() {
 #ifdef AE_OS_WIN
     StopHotkeyOverlay();
-    StopWsClient();
+    StopScriptRunner();
 #endif
   }
 
